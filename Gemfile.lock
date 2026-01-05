@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    timeline (0.1.0)
+    event_timeline (0.1.0)
       rails (>= 7.0)
 
 GEM
@@ -200,8 +200,8 @@ PLATFORMS
   arm64-darwin
 
 DEPENDENCIES
+  event_timeline!
   sqlite3
-  timeline!
 
 BUNDLED WITH
    2.7.2
