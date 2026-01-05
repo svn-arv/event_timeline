@@ -1,0 +1,46 @@
+<div class="container">
+  <h1>Timeline for <span class="correlation-id"><%= @correlation_id %></span></h1>
+
+  <div class="timeline">
+    <% @events.each do |event| %>
+      <% is_return = event.category == "method_return" %>
+      <div class="event <%= event.severity %> <%= 'return' if is_return %>">
+        <div class="event-header">
+          <span class="event-name">
+            <% if is_return %>
+              &lt;- <%= event.name.gsub('_return', '') %>
+            <% else %>
+              <%= narrate_event(event) %>
+            <% end %>
+          </span>
+          <span class="event-time"><%= event.occurred_at.strftime("%H:%M:%S.%L") %></span>
+        </div>
+
+        <% if event.payload.present? %>
+          <% if is_return %>
+            <div style="font-size: 14px; color: #059862;">
+              Returns: <%= event.payload['return_value'] %>
+            </div>
+          <% elsif event.payload['params'].present? && !event.payload['params'].empty? %>
+            <div style="font-size: 14px; color: #0066cc;">
+              Params: <%= event.payload['params'].inspect %>
+            </div>
+          <% end %>
+          
+          <details>
+            <summary>Show full payload</summary>
+            <div class="event-payload">
+              <%= JSON.pretty_generate(event.payload) %>
+            </div>
+          </details>
+        <% end %>
+      </div>
+    <% end %>
+
+    <% if @events.empty? %>
+      <p style="color: #6c757d; text-align: center; padding: 40px 0;">
+        No events found for this correlation ID
+      </p>
+    <% end %>
+  </div>
+</div>
