@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-module Timeline
+module EventTimeline
   class Configuration
     attr_accessor :narrator_proc, :watched_paths, :pii_filter_proc, :filtered_attributes,
                   :max_events_per_correlation, :max_total_events, :cleanup_threshold, :max_event_age

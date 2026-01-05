@@ -2,7 +2,7 @@
 
 source 'https://rubygems.org'
 
-# Specify your gem's dependencies in timeline.gemspec.
+# Specify your gem's dependencies in event_timeline.gemspec.
 gemspec
 
 group :development, :test do

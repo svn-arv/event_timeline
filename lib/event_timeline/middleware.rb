@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-module Timeline
+module EventTimeline
   class Middleware
     def initialize(app)
       @app = app

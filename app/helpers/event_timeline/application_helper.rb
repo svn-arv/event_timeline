@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 
-module Timeline
+module EventTimeline
   module ApplicationHelper
     def narrate_event(event)
-      if Timeline.configuration&.narrator_proc
-        Timeline.configuration.narrator_proc.call(event)
+      if EventTimeline.configuration&.narrator_proc
+        EventTimeline.configuration.narrator_proc.call(event)
       else
         event.name.humanize
       end

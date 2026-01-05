@@ -1,10 +1,10 @@
-# Timeline
+# EventTimeline
 
-Ever wished you could replay what happened during a request? Timeline tracks method calls in your Rails app so you can see exactly how your code executed.
+Ever wished you could replay what happened during a request? EventTimeline tracks method calls in your Rails app so you can see exactly how your code executed.
 
 ## What it does
 
-Timeline records method calls and returns as they happen, letting you:
+EventTimeline records method calls and returns as they happen, letting you:
 
 - See the exact sequence of method calls during a request
 - Inspect parameters passed to each method
@@ -17,14 +17,14 @@ Timeline records method calls and returns as they happen, letting you:
 Add to your Gemfile:
 
 ```ruby
-gem 'timeline'
+gem 'event_timeline'
 ```
 
 Then:
 
 ```bash
 bundle install
-rails generate timeline:install
+rails generate event_timeline:install
 rails db:migrate
 ```
 
@@ -33,8 +33,8 @@ rails db:migrate
 ### 1. Configure what to track
 
 ```ruby
-# config/initializers/timeline.rb
-Timeline.configure do |config|
+# config/initializers/event_timeline.rb
+EventTimeline.configure do |config|
   # Track specific paths
   config.watch 'app/services'
   config.watch 'app/models/order.rb'
@@ -44,9 +44,9 @@ end
 
 ### 2. View the timeline
 
-Visit `/timeline/sessions/:request_id` to see what happened during any request.
+Visit `/event_timeline/sessions/:request_id` to see what happened during any request.
 
-Example: Your logs show request ID `abc-123-def` failed? Go to `/timeline/sessions/abc-123-def` and see every method that was called.
+Example: Your logs show request ID `abc-123-def` failed? Go to `/event_timeline/sessions/abc-123-def` and see every method that was called.
 
 ## Real-world Example
 
@@ -71,7 +71,7 @@ Now you know exactly where things went wrong and what data was involved.
 ## Configuration Options
 
 ```ruby
-Timeline.configure do |config|
+EventTimeline.configure do |config|
   # Filter sensitive data
   config.add_filtered_attributes :credit_card, :ssn, :api_key
 
@@ -99,7 +99,7 @@ end
 
 ## Performance
 
-Timeline uses TracePoint which has minimal overhead. Data is automatically rotated to prevent unbounded growth:
+EventTimeline uses TracePoint which has minimal overhead. Data is automatically rotated to prevent unbounded growth:
 
 - Old events are deleted after 1 month
 - Per-request events are capped at 500
@@ -107,15 +107,15 @@ Timeline uses TracePoint which has minimal overhead. Data is automatically rotat
 
 ## Pro Tips
 
-1. **Production Debugging**: When users report issues, ask for their request ID from the logs. Timeline will show you exactly what happened.
+1. **Production Debugging**: When users report issues, ask for their request ID from the logs. EventTimeline will show you exactly what happened.
 
 2. **Development**: Watch your code execute in real-time. Great for understanding unfamiliar codebases.
 
 3. **Testing**: Verify your code follows the expected execution path.
 
-4. **Correlation IDs**: Timeline automatically groups events by request ID, but you can set custom correlation IDs:
+4. **Correlation IDs**: EventTimeline automatically groups events by request ID, but you can set custom correlation IDs:
    ```ruby
-   Timeline::CurrentCorrelation.id = "import-job-#{job.id}"
+   EventTimeline::CurrentCorrelation.id = "import-job-#{job.id}"
    ```
 
 ## Limitations

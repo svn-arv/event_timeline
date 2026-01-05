@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-module Timeline
+module EventTimeline
   class CallTracker
     class << self
       def install!
@@ -8,7 +8,7 @@ module Timeline
         @method_stack = Hash.new { |h, k| h[k] = [] }
 
         call_trace = TracePoint.new(:call) do |tp|
-          next unless Timeline.configuration&.watched?(tp.path)
+          next unless EventTimeline.configuration&.watched?(tp.path)
 
           current_location = "#{tp.path}:#{tp.lineno}"
           correlation_id = CurrentCorrelation.id || determine_correlation_id
@@ -46,11 +46,11 @@ module Timeline
             RotationService.cleanup_if_needed
           end
         rescue StandardError => e
-          Rails.logger.error "Timeline call tracking failed: #{e.message}" if defined?(Rails.logger)
+          Rails.logger.error "EventTimeline call tracking failed: #{e.message}" if defined?(Rails.logger)
         end
 
         return_trace = TracePoint.new(:return) do |tp|
-          next unless Timeline.configuration&.watched?(tp.path)
+          next unless EventTimeline.configuration&.watched?(tp.path)
 
           correlation_id = CurrentCorrelation.id || determine_correlation_id
           method_info = @method_stack[correlation_id].find { |m| m[:method] == "#{tp.defined_class}##{tp.method_id}" }
@@ -73,7 +73,7 @@ module Timeline
             )
           end
         rescue StandardError => e
-          Rails.logger.error "Timeline return tracking failed: #{e.message}" if defined?(Rails.logger)
+          Rails.logger.error "EventTimeline return tracking failed: #{e.message}" if defined?(Rails.logger)
         end
 
         call_trace.enable
@@ -147,7 +147,7 @@ module Timeline
       end
 
       def filter_sensitive_data(key, value, context = {})
-        if Timeline.configuration&.should_filter?(key, value, context)
+        if EventTimeline.configuration&.should_filter?(key, value, context)
           case value
           when String
             '<FILTERED>'
@@ -174,13 +174,13 @@ module Timeline
       end
 
       def filter_activerecord(record)
-        if Timeline.configuration&.should_filter?(:activerecord, record, { context: :model })
+        if EventTimeline.configuration&.should_filter?(:activerecord, record, { context: :model })
           '<FILTERED>'
         else
           # Show model with filtered attributes
           filtered_attrs = {}
           record.attributes.each do |key, value|
-            filtered_attrs[key] = if Timeline.configuration&.should_filter?(key, value, { context: :attribute })
+            filtered_attrs[key] = if EventTimeline.configuration&.should_filter?(key, value, { context: :attribute })
                                     '<FILTERED>'
                                   else
                                     safe_inspect(value)

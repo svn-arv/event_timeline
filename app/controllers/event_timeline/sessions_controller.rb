@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-module Timeline
+module EventTimeline
   class SessionsController < ApplicationController
     def show
       @correlation_id = params[:id]

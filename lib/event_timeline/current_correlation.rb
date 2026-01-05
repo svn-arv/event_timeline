@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-module Timeline
+module EventTimeline
   class CurrentCorrelation < ActiveSupport::CurrentAttributes
     attribute :id
   end

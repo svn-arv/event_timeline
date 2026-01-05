@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
-module Timeline
+module EventTimeline
   class Session < ApplicationRecord
-    self.table_name = 'timeline_sessions'
+    self.table_name = 'event_timeline_sessions'
 
     validates :name, presence: true
     validates :correlation_id, presence: true
