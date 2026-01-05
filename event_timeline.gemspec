@@ -10,6 +10,8 @@ Gem::Specification.new do |spec|
   spec.summary     = 'Debug Rails apps by replaying method calls from any request'
   spec.description = 'EventTimeline tracks method calls in your Rails app so you can replay and debug what happened during any request. Perfect for understanding production issues and unfamiliar codebases.'
   spec.license     = 'MIT'
+  spec.homepage    = 'https://github.com/svn-arv/event_timeline'
+  spec.required_ruby_version = '>= 3.0'
 
   spec.files = Dir.chdir(File.expand_path(__dir__)) do
     Dir['{app,config,db,lib}/**/*', 'MIT-LICENSE', 'Rakefile', 'README.md']
