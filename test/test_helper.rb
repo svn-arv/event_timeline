@@ -62,10 +62,26 @@ module EventTimeline
     setup do
       EventTimeline.configuration = nil
       EventTimeline::Session.delete_all
+      EventTimeline::CallTracker.install!
     end
 
     teardown do
       EventTimeline::Session.delete_all
+      clear_thread_state
+    end
+
+    private
+
+    def clear_thread_state
+      Thread.current[:event_timeline_last_location] = nil
+      Thread.current[:event_timeline_method_stack] = nil
+      Thread.current[:event_timeline_event_buffer] = nil
+      Thread.current[:request_id] = nil
+      EventTimeline::CurrentCorrelation.reset if defined?(EventTimeline::CurrentCorrelation)
+    end
+
+    def configure_timeline(&block)
+      EventTimeline.configure(&block)
     end
   end
 end

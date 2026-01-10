@@ -71,9 +71,3 @@ module EventTimeline
     end
   end
 end
-
-private
-
-def configure_timeline(&block)
-  EventTimeline.configure(&block)
-end
