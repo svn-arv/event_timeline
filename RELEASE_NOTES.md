@@ -1,3 +1,33 @@
+# EventTimeline v0.2.1
+
+Performance improvements release.
+
+## Changes
+
+**Watched Path Caching**
+- Cache `watched?` lookups to avoid repeated `File.fnmatch?` on every method call
+- New `clear_watched_cache!` method to invalidate cache if needed
+
+**Probabilistic Rotation**
+- Only run `Session.count` every 100 flushes instead of every request
+- Track correlation counts in memory, only query DB when near 90% of limit
+- New `RotationService.reset_counters!` method for testing
+
+**TracePoint Optimization**
+- Skip redundant `watched?` check in return handler
+
+## Installation
+
+```ruby
+gem 'event_timeline', '~> 0.2.1'
+```
+
+```bash
+bundle update event_timeline
+```
+
+---
+
 # EventTimeline v0.2.0
 
 Major refactoring release with exception tracking and improved architecture.
