@@ -33,9 +33,10 @@ module EventTimeline
         buffer = thread_event_buffer
         return if buffer.empty?
 
+        buffer_size = buffer.size
         Session.insert_all(buffer)
 
-        RotationService.enforce_correlation_limit(correlation_id)
+        RotationService.enforce_correlation_limit(correlation_id, buffer_size)
         RotationService.cleanup_if_needed
       rescue StandardError => e
         Rails.logger.error "EventTimeline flush failed: #{e.message}" if defined?(Rails.logger)
@@ -100,9 +101,10 @@ module EventTimeline
       end
 
       def handle_return(tp)
-        return unless EventTimeline.configuration&.watched?(tp.path)
+        # Skip watched? check - if we didn't track the call, pop_from_stack returns nil
+        correlation_id = CurrentCorrelation.id
+        return unless correlation_id
 
-        correlation_id = CurrentCorrelation.id || determine_correlation_id
         method_info = pop_from_stack(correlation_id, tp)
         return unless method_info
 

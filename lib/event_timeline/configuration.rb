@@ -8,6 +8,7 @@ module EventTimeline
 
     def initialize
       @watched_paths = []
+      @watched_cache = {}                 # Cache for watched? lookups
       @filtered_attributes = default_filtered_attributes
       @max_events_per_correlation = 500   # Max events per correlation_id
       @max_total_events = 10_000          # Max total events before cleanup
@@ -23,14 +24,21 @@ module EventTimeline
 
     def watch(path)
       @watched_paths << normalize_path(path)
+      @watched_cache.clear # Invalidate cache when paths change
     end
 
     def watched?(file_path)
       return false if @watched_paths.empty?
 
-      @watched_paths.any? do |pattern|
-        File.fnmatch?(pattern, file_path, File::FNM_PATHNAME)
+      @watched_cache.fetch(file_path) do
+        @watched_cache[file_path] = @watched_paths.any? do |pattern|
+          File.fnmatch?(pattern, file_path, File::FNM_PATHNAME)
+        end
       end
+    end
+
+    def clear_watched_cache!
+      @watched_cache.clear
     end
 
     def filter_pii(&block)

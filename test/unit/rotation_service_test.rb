@@ -6,10 +6,12 @@ module EventTimeline
   class RotationServiceTest < TestCase
     setup do
       Session.delete_all
+      RotationService.reset_counters!
     end
 
     teardown do
       Session.delete_all
+      RotationService.reset_counters!
     end
 
     test 'cleanup_if_needed does nothing when below threshold' do
@@ -28,7 +30,7 @@ module EventTimeline
       end
 
       assert_no_difference 'Session.count' do
-        RotationService.cleanup_if_needed
+        RotationService.cleanup_if_needed(force: true)
       end
     end
 
@@ -47,7 +49,7 @@ module EventTimeline
         )
       end
 
-      RotationService.cleanup_if_needed
+      RotationService.cleanup_if_needed(force: true)
 
       # Should clean down to 70% (70 events)
       assert_operator Session.count, :<=, 70
@@ -65,7 +67,7 @@ module EventTimeline
       end
 
       assert_no_difference 'Session.count' do
-        RotationService.cleanup_if_needed
+        RotationService.cleanup_if_needed(force: true)
       end
     end
 
@@ -85,7 +87,7 @@ module EventTimeline
         )
       end
 
-      RotationService.enforce_correlation_limit(correlation_id)
+      RotationService.enforce_correlation_limit(correlation_id, 0, force: true)
 
       # Should keep 80% of max (8 events)
       remaining = Session.where(correlation_id: correlation_id).count
@@ -108,7 +110,7 @@ module EventTimeline
       end
 
       assert_no_difference 'Session.count' do
-        RotationService.enforce_correlation_limit(correlation_id)
+        RotationService.enforce_correlation_limit(correlation_id, 0, force: true)
       end
     end
 
@@ -134,7 +136,7 @@ module EventTimeline
         )
       end
 
-      RotationService.enforce_correlation_limit('correlation-a')
+      RotationService.enforce_correlation_limit('correlation-a', 0, force: true)
 
       # correlation-a should be reduced, correlation-b unchanged
       assert_equal 8, Session.where(correlation_id: 'correlation-a').count
@@ -154,7 +156,7 @@ module EventTimeline
       end
 
       assert_no_difference 'Session.count' do
-        RotationService.enforce_correlation_limit(correlation_id)
+        RotationService.enforce_correlation_limit(correlation_id, 0, force: true)
       end
     end
   end
