@@ -3,3 +3,10 @@
 /log/*.log
 /pkg/
 /tmp/
+*.gem
+
+# Dummy app secrets and generated files
+test/dummy/config/master.key
+test/dummy/config/credentials.yml.enc
+test/dummy/storage/*.sqlite3
+test/dummy/log/*.log
