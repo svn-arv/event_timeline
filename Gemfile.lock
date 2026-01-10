@@ -113,8 +113,7 @@ GEM
       net-smtp
     marcel (1.1.0)
     mini_mime (1.1.5)
-    minitest (6.0.1)
-      prism (~> 1.5)
+    minitest (5.27.0)
     net-imap (0.6.2)
       date
       net-protocol
@@ -130,7 +129,6 @@ GEM
     pp (0.6.3)
       prettyprint
     prettyprint (0.2.0)
-    prism (1.7.0)
     psych (5.3.1)
       date
       stringio
@@ -201,7 +199,8 @@ PLATFORMS
 
 DEPENDENCIES
   event_timeline!
-  sqlite3
+  minitest (~> 5.0)
+  sqlite3 (>= 2.0, >= 0)
 
 BUNDLED WITH
    2.7.2

@@ -1,12 +1,12 @@
 # frozen_string_literal: true
 
-class CreateEventTimelineSessions < ActiveRecord::Migration[8.1]
+class CreateEventTimelineSessions < ActiveRecord::Migration[7.0]
   def change
     create_table :event_timeline_sessions do |t|
       t.string :name, null: false
       t.string :severity, default: 'info'
       t.string :category
-      t.jsonb :payload
+      t.json :payload
       t.string :correlation_id, null: false
       t.datetime :occurred_at, null: false
 

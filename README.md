@@ -1,26 +1,18 @@
 # EventTimeline
 
-Ever wished you could replay what happened during a request? EventTimeline tracks method calls in your Rails app so you can see exactly how your code executed.
+A Rails engine that records method calls during requests so you can see what actually happened.
 
-## What it does
+## Why?
 
-EventTimeline records method calls and returns as they happen, letting you:
+You get a bug report: "Order failed for user X". You check the logs, see a 500 error, but the stack trace doesn't tell you what state the app was in or what data was being processed.
 
-- See the exact sequence of method calls during a request
-- Inspect parameters passed to each method
-- View return values
-- Track execution flow across multiple services
-- Debug production issues by replaying what actually happened
+EventTimeline records the method calls, parameters, and return values during the request. You visit `/event_timeline/sessions/<request_id>` and see exactly what happened.
 
-## Installation
-
-Add to your Gemfile:
+## Install
 
 ```ruby
 gem 'event_timeline'
 ```
-
-Then:
 
 ```bash
 bundle install
@@ -28,101 +20,76 @@ rails generate event_timeline:install
 rails db:migrate
 ```
 
-## Basic Usage
+## Setup
 
-### 1. Configure what to track
+Tell it what to track:
 
 ```ruby
 # config/initializers/event_timeline.rb
 EventTimeline.configure do |config|
-  # Track specific paths
   config.watch 'app/services'
-  config.watch 'app/models/order.rb'
-  config.watch 'lib/payment_processor'
+  config.watch 'app/models'
 end
 ```
 
-### 2. View the timeline
+## Usage
 
-Visit `/event_timeline/sessions/:request_id` to see what happened during any request.
-
-Example: Your logs show request ID `abc-123-def` failed? Go to `/event_timeline/sessions/abc-123-def` and see every method that was called.
-
-## Real-world Example
-
-Let's say a payment fails in production. Here's what you'd see:
+Make a request, grab the request ID from logs, visit:
 
 ```
-OrdersController#create
-  Order#initialize
-    Order#validate_items
-    Order#calculate_total
-  Order#save
-  PaymentService#charge
-    PaymentGateway#create_charge
-      <- Returns: {error: "Insufficient funds"}
-    PaymentService#handle_failure
-      Order#mark_as_failed
-      CustomerMailer#payment_failed
+/event_timeline/sessions/abc-123-def
 ```
 
-Now you know exactly where things went wrong and what data was involved.
+You'll see the call timeline with params and return values. If the request crashed, you'll see the exception with its source location and backtrace.
 
-## Configuration Options
+## Configuration
 
 ```ruby
 EventTimeline.configure do |config|
-  # Filter sensitive data
-  config.add_filtered_attributes :credit_card, :ssn, :api_key
+  # What to track
+  config.watch 'app/services'
+  config.watch 'lib/payments'
 
-  # Custom PII filtering
-  config.filter_pii do |key, value|
-    return '<REDACTED>' if key.to_s =~ /bank_account/
+  # Filter sensitive params (these are filtered by default: password, token, secret, etc.)
+  config.add_filtered_attributes :credit_card, :ssn
+
+  # Custom filtering
+  config.filter_pii do |key, value, context|
+    key.to_s.include?('account_number') ? true : nil
   end
 
-  # Customize how events are described
-  config.narrator do |event|
-    case event.name
-    when /Stripe/
-      "[PAYMENT] #{event.name}"
-    else
-      event.name
-    end
-  end
+  # Retention
+  config.max_events_per_correlation = 500
+  config.max_total_events = 10_000
+  config.max_event_age = 1.month
 
-  # Data retention (defaults shown)
-  config.max_events_per_correlation = 500     # Per request
-  config.max_total_events = 10_000            # Total stored
-  config.max_event_age = 1.month              # Auto-delete after
+  # Truncation
+  config.max_string_length = 100
+  config.max_inspect_length = 200
 end
 ```
 
-## Performance
+## Runtime control
 
-EventTimeline uses TracePoint which has minimal overhead. Data is automatically rotated to prevent unbounded growth:
+```ruby
+EventTimeline::CallTracker.uninstall!   # stop tracking
+EventTimeline::CallTracker.install!     # start tracking
+EventTimeline::CallTracker.installed?   # check status
+```
 
-- Old events are deleted after 1 month
-- Per-request events are capped at 500
-- Total events are capped at 10,000
+## Custom correlation IDs
 
-## Pro Tips
+For background jobs or anything outside a request:
 
-1. **Production Debugging**: When users report issues, ask for their request ID from the logs. EventTimeline will show you exactly what happened.
-
-2. **Development**: Watch your code execute in real-time. Great for understanding unfamiliar codebases.
-
-3. **Testing**: Verify your code follows the expected execution path.
-
-4. **Correlation IDs**: EventTimeline automatically groups events by request ID, but you can set custom correlation IDs:
-   ```ruby
-   EventTimeline::CurrentCorrelation.id = "import-job-#{job.id}"
-   ```
+```ruby
+EventTimeline::CurrentCorrelation.id = "import-job-#{job.id}"
+```
 
 ## Limitations
 
-- Only tracks Ruby method calls (not database queries or external HTTP calls)
-- TracePoint doesn't work with some metaprogramming techniques
-- Large payloads are truncated to keep storage reasonable
+- Only tracks Ruby method calls (not SQL queries or HTTP calls)
+- TracePoint has some overhead - probably don't enable in high-traffic production without sampling
+- Large values get truncated
 
 ## License
 

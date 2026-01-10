@@ -1,40 +1,82 @@
 <div class="container">
   <h1>Timeline for <span class="correlation-id"><%= @correlation_id %></span></h1>
 
+  <% has_exception = @events.any? { |e| e.category == 'exception' } %>
+  <% if @events.any? %>
+    <div class="status-badge <%= has_exception ? 'failed' : 'success' %>">
+      <%= has_exception ? 'FAILED' : 'SUCCESS' %>
+    </div>
+  <% end %>
+
   <div class="timeline">
     <% @events.each do |event| %>
       <% is_return = event.category == "method_return" %>
-      <div class="event <%= event.severity %> <%= 'return' if is_return %>">
-        <div class="event-header">
-          <span class="event-name">
-            <% if is_return %>
-              &lt;- <%= event.name.gsub('_return', '') %>
-            <% else %>
-              <%= narrate_event(event) %>
-            <% end %>
-          </span>
-          <span class="event-time"><%= event.occurred_at.strftime("%H:%M:%S.%L") %></span>
-        </div>
+      <% is_exception = event.category == "exception" %>
 
-        <% if event.payload.present? %>
-          <% if is_return %>
-            <div style="font-size: 14px; color: #059862;">
-              Returns: <%= event.payload['return_value'] %>
-            </div>
-          <% elsif event.payload['params'].present? && !event.payload['params'].empty? %>
-            <div style="font-size: 14px; color: #0066cc;">
-              Params: <%= event.payload['params'].inspect %>
+      <% if is_exception %>
+        <div class="event exception">
+          <div class="exception-header">
+            <%= event.payload['exception_class'] %>
+          </div>
+
+          <div class="exception-message">
+            <%= event.payload['message'] %>
+          </div>
+
+          <% if event.payload['source_file'] %>
+            <div class="exception-location">
+              Raised in <strong><%= event.payload['source_method'] %></strong>
+              at <%= event.payload['source_file'] %>:<%= event.payload['source_line'] %>
             </div>
           <% end %>
-          
-          <details>
-            <summary>Show full payload</summary>
-            <div class="event-payload">
-              <%= JSON.pretty_generate(event.payload) %>
-            </div>
-          </details>
-        <% end %>
-      </div>
+
+          <span class="event-time"><%= event.occurred_at.strftime("%H:%M:%S.%L") %></span>
+
+          <% if event.payload['backtrace'].present? %>
+            <details>
+              <summary>Show backtrace</summary>
+              <div class="exception-backtrace">
+                <% event.payload['backtrace'].each do |line| %>
+                  <div class="exception-backtrace-line"><%= line %></div>
+                <% end %>
+              </div>
+            </details>
+          <% end %>
+        </div>
+
+      <% else %>
+        <div class="event <%= event.severity %> <%= 'return' if is_return %>">
+          <div class="event-header">
+            <span class="event-name">
+              <% if is_return %>
+                &lt;- <%= event.name.gsub('_return', '') %>
+              <% else %>
+                <%= narrate_event(event) %>
+              <% end %>
+            </span>
+            <span class="event-time"><%= event.occurred_at.strftime("%H:%M:%S.%L") %></span>
+          </div>
+
+          <% if event.payload.present? %>
+            <% if is_return %>
+              <div style="font-size: 14px; color: #059862;">
+                Returns: <%= event.payload['return_value'] %>
+              </div>
+            <% elsif event.payload['params'].present? && !event.payload['params'].empty? %>
+              <div style="font-size: 14px; color: #0066cc;">
+                Params: <%= event.payload['params'].inspect %>
+              </div>
+            <% end %>
+
+            <details>
+              <summary>Show full payload</summary>
+              <div class="event-payload">
+                <%= JSON.pretty_generate(event.payload) %>
+              </div>
+            </details>
+          <% end %>
+        </div>
+      <% end %>
     <% end %>
 
     <% if @events.empty? %>

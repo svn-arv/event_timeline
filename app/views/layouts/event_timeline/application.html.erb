@@ -61,6 +61,65 @@
       background: #dc3545;
       border-color: #dc3545;
     }
+    .event.exception {
+      background: #fff5f5;
+      border: 2px solid #dc3545;
+    }
+    .event.exception::before {
+      background: #dc3545;
+      border-color: #dc3545;
+      width: 14px;
+      height: 14px;
+      left: -27px;
+      top: 18px;
+    }
+    .exception-header {
+      color: #dc3545;
+      font-weight: bold;
+      font-size: 16px;
+    }
+    .exception-message {
+      background: #f8d7da;
+      color: #721c24;
+      padding: 10px 15px;
+      border-radius: 4px;
+      margin: 10px 0;
+      font-family: monospace;
+    }
+    .exception-location {
+      font-size: 13px;
+      color: #666;
+      margin-bottom: 10px;
+    }
+    .exception-backtrace {
+      background: #282c34;
+      color: #abb2bf;
+      padding: 15px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 12px;
+      overflow-x: auto;
+      margin-top: 10px;
+    }
+    .exception-backtrace-line {
+      margin: 2px 0;
+    }
+    .status-badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: bold;
+      margin-bottom: 15px;
+    }
+    .status-badge.success {
+      background: #d4edda;
+      color: #155724;
+    }
+    .status-badge.failed {
+      background: #f8d7da;
+      color: #721c24;
+    }
     .event.warning::before {
       background: #ffc107;
       border-color: #ffc107;

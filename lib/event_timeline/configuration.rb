@@ -3,15 +3,18 @@
 module EventTimeline
   class Configuration
     attr_accessor :narrator_proc, :watched_paths, :pii_filter_proc, :filtered_attributes,
-                  :max_events_per_correlation, :max_total_events, :cleanup_threshold, :max_event_age
+                  :max_events_per_correlation, :max_total_events, :cleanup_threshold, :max_event_age,
+                  :max_string_length, :max_inspect_length
 
     def initialize
       @watched_paths = []
       @filtered_attributes = default_filtered_attributes
-      @max_events_per_correlation = 500 # Max events per correlation_id
-      @max_total_events = 10_000 # Max total events before cleanup
-      @cleanup_threshold = 0.8           # Start cleanup at 80% of max
-      @max_event_age = 1.month           # Delete events older than this
+      @max_events_per_correlation = 500   # Max events per correlation_id
+      @max_total_events = 10_000          # Max total events before cleanup
+      @cleanup_threshold = 0.8            # Start cleanup at 80% of max
+      @max_event_age = 1.month            # Delete events older than this
+      @max_string_length = 100            # Truncate strings longer than this
+      @max_inspect_length = 200           # Truncate inspected values longer than this
     end
 
     def narrator(&block)
@@ -81,7 +84,11 @@ module EventTimeline
     def normalize_path(path)
       path = path.to_s
       path = "#{Rails.root}/#{path}" unless path.start_with?('/')
-      "#{path.gsub(%r{/$}, '')}/**/*.rb" unless path.include?('*')
+      if path.include?('*')
+        path
+      else
+        "#{path.gsub(%r{/$}, '')}/**/*.rb"
+      end
     end
   end
 end

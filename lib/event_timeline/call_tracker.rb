@@ -2,94 +2,196 @@
 
 module EventTimeline
   class CallTracker
+    THREAD_KEY_METHOD_STACK = :event_timeline_method_stack
+    THREAD_KEY_EVENT_BUFFER = :event_timeline_event_buffer
+
     class << self
+      attr_reader :call_trace, :return_trace
+
       def install!
-        @last_location = {}
-        @method_stack = Hash.new { |h, k| h[k] = [] }
+        return if installed?
 
-        call_trace = TracePoint.new(:call) do |tp|
-          next unless EventTimeline.configuration&.watched?(tp.path)
+        @call_trace = TracePoint.new(:call) { |tp| handle_call(tp) }
+        @return_trace = TracePoint.new(:return) { |tp| handle_return(tp) }
 
-          current_location = "#{tp.path}:#{tp.lineno}"
-          correlation_id = CurrentCorrelation.id || determine_correlation_id
+        @call_trace.enable
+        @return_trace.enable
+      end
 
-          if @last_location[correlation_id] != current_location
-            @last_location[correlation_id] = current_location
+      def uninstall!
+        @call_trace&.disable
+        @return_trace&.disable
+        @call_trace = nil
+        @return_trace = nil
+      end
 
-            # Capture method arguments
-            params = capture_params(tp)
+      def installed?
+        @call_trace&.enabled? || @return_trace&.enabled?
+      end
 
-            event_id = SecureRandom.uuid
-            @method_stack[correlation_id].push({
-                                                 event_id: event_id,
-                                                 method: "#{tp.defined_class}##{tp.method_id}"
-                                               })
+      def flush_events(correlation_id)
+        buffer = thread_event_buffer
+        return if buffer.empty?
 
-            Session.create!(
-              name: "#{tp.defined_class}##{tp.method_id}",
-              severity: 'info',
-              category: 'method_call',
-              payload: {
-                event_id: event_id,
-                file: tp.path,
-                line: tp.lineno,
-                class: tp.defined_class.to_s,
-                method: tp.method_id.to_s,
-                params: params
-              },
-              correlation_id: correlation_id,
-              occurred_at: Time.current
-            )
+        Session.insert_all(buffer)
 
-            # Enforce rotation limits
-            RotationService.enforce_correlation_limit(correlation_id)
-            RotationService.cleanup_if_needed
-          end
-        rescue StandardError => e
-          Rails.logger.error "EventTimeline call tracking failed: #{e.message}" if defined?(Rails.logger)
-        end
+        RotationService.enforce_correlation_limit(correlation_id)
+        RotationService.cleanup_if_needed
+      rescue StandardError => e
+        Rails.logger.error "EventTimeline flush failed: #{e.message}" if defined?(Rails.logger)
+      end
 
-        return_trace = TracePoint.new(:return) do |tp|
-          next unless EventTimeline.configuration&.watched?(tp.path)
+      def cleanup_thread_state(correlation_id)
+        thread_method_stack.delete(correlation_id)
+        Thread.current[THREAD_KEY_EVENT_BUFFER] = []
+      end
 
-          correlation_id = CurrentCorrelation.id || determine_correlation_id
-          method_info = @method_stack[correlation_id].find { |m| m[:method] == "#{tp.defined_class}##{tp.method_id}" }
+      def record_exception(exception, correlation_id)
+        backtrace = clean_backtrace(exception.backtrace || [])
+        source_location = extract_source_location(backtrace)
 
-          if method_info
-            @method_stack[correlation_id].delete(method_info)
-
-            Session.create!(
-              name: "#{tp.defined_class}##{tp.method_id}_return",
-              severity: 'info',
-              category: 'method_return',
-              payload: {
-                event_id: method_info[:event_id],
-                return_value: filter_sensitive_data(:return_value, tp.return_value, { context: :return_value }),
-                class: tp.defined_class.to_s,
-                method: tp.method_id.to_s
-              },
-              correlation_id: correlation_id,
-              occurred_at: Time.current
-            )
-          end
-        rescue StandardError => e
-          Rails.logger.error "EventTimeline return tracking failed: #{e.message}" if defined?(Rails.logger)
-        end
-
-        call_trace.enable
-        return_trace.enable
+        buffer_event(
+          name: "EXCEPTION: #{exception.class.name}",
+          severity: 'error',
+          category: 'exception',
+          payload: {
+            exception_class: exception.class.name,
+            message: exception.message,
+            backtrace: backtrace.first(10),
+            source_file: source_location[:file],
+            source_line: source_location[:line],
+            source_method: source_location[:method]
+          },
+          correlation_id: correlation_id,
+          occurred_at: Time.current
+        )
+      rescue StandardError => e
+        Rails.logger.error "EventTimeline exception recording failed: #{e.message}" if defined?(Rails.logger)
       end
 
       private
+
+      def clean_backtrace(backtrace)
+        # Filter out gem internals, keep app code
+        backtrace.reject { |line| line.include?('/gems/') || line.include?('/ruby/') }
+      end
+
+      def extract_source_location(backtrace)
+        return { file: nil, line: nil, method: nil } if backtrace.empty?
+
+        # Parse first line: "/path/to/file.rb:123:in `method_name'"
+        if backtrace.first =~ /\A(.+):(\d+):in `(.+)'\z/
+          { file: ::Regexp.last_match(1), line: ::Regexp.last_match(2).to_i, method: ::Regexp.last_match(3) }
+        else
+          { file: backtrace.first, line: nil, method: nil }
+        end
+      end
+
+      def handle_call(tp)
+        return unless EventTimeline.configuration&.watched?(tp.path)
+
+        correlation_id = CurrentCorrelation.id || determine_correlation_id
+        event_id = SecureRandom.uuid
+
+        push_to_stack(correlation_id, event_id, tp)
+        buffer_call_event(correlation_id, event_id, tp)
+      rescue StandardError => e
+        Rails.logger.error "EventTimeline call tracking failed: #{e.message}" if defined?(Rails.logger)
+      end
+
+      def handle_return(tp)
+        return unless EventTimeline.configuration&.watched?(tp.path)
+
+        correlation_id = CurrentCorrelation.id || determine_correlation_id
+        method_info = pop_from_stack(correlation_id, tp)
+        return unless method_info
+
+        buffer_return_event(correlation_id, method_info, tp)
+      rescue StandardError => e
+        Rails.logger.error "EventTimeline return tracking failed: #{e.message}" if defined?(Rails.logger)
+      end
+
+      def push_to_stack(correlation_id, event_id, tp)
+        stack = thread_method_stack[correlation_id] ||= []
+        stack.push(
+          event_id: event_id,
+          method: method_signature(tp)
+        )
+      end
+
+      def pop_from_stack(correlation_id, tp)
+        stack = thread_method_stack[correlation_id]
+        return unless stack
+
+        signature = method_signature(tp)
+
+        # Find the LAST matching entry (proper LIFO for recursion)
+        index = stack.rindex { |m| m[:method] == signature }
+        return unless index
+
+        stack.delete_at(index)
+      end
+
+      def method_signature(tp)
+        "#{tp.defined_class}##{tp.method_id}"
+      end
+
+      def buffer_call_event(correlation_id, event_id, tp)
+        buffer_event(
+          name: method_signature(tp),
+          severity: 'info',
+          category: 'method_call',
+          payload: {
+            event_id: event_id,
+            file: tp.path,
+            line: tp.lineno,
+            class: tp.defined_class.to_s,
+            method: tp.method_id.to_s,
+            params: capture_params(tp)
+          },
+          correlation_id: correlation_id,
+          occurred_at: Time.current
+        )
+      end
+
+      def buffer_return_event(correlation_id, method_info, tp)
+        buffer_event(
+          name: "#{method_signature(tp)}_return",
+          severity: 'info',
+          category: 'method_return',
+          payload: {
+            event_id: method_info[:event_id],
+            return_value: ValueFilter.filter(:return_value, tp.return_value, { context: :return_value }),
+            class: tp.defined_class.to_s,
+            method: tp.method_id.to_s
+          },
+          correlation_id: correlation_id,
+          occurred_at: Time.current
+        )
+      end
+
+      def thread_method_stack
+        Thread.current[THREAD_KEY_METHOD_STACK] ||= {}
+      end
+
+      def thread_event_buffer
+        Thread.current[THREAD_KEY_EVENT_BUFFER] ||= []
+      end
+
+      def buffer_event(event)
+        thread_event_buffer << event
+      end
 
       def capture_params(tp)
         method = tp.self.method(tp.method_id)
         params = {}
 
-        method.parameters.each_value do |name|
+        method.parameters.each do |_type, name|
+          next unless name
+
           if tp.binding.local_variable_defined?(name)
             value = tp.binding.local_variable_get(name)
-            params[name] = filter_sensitive_data(name, value, { context: :parameter })
+            params[name] = ValueFilter.filter(name, value, { context: :parameter })
           end
         end
 
@@ -98,105 +200,11 @@ module EventTimeline
         { error: "Failed to capture params: #{e.message}" }
       end
 
-      def safe_inspect(value)
-        case value
-        when String
-          value.length > 100 ? "#{value[0..100]}..." : value
-        when Hash, Array
-          value.inspect.length > 200 ? "#{value.class}[#{value.size} items]" : value.inspect
-        when defined?(ActiveRecord::Base) && ActiveRecord::Base
-          inspect_activerecord(value)
-        when defined?(ActiveModel::Model) && ActiveModel::Model
-          inspect_model(value)
-        when Class
-          value.name
-        when Module
-          value.name
-        else
-          simple_inspect(value)
-        end
-      rescue StandardError => e
-        "<inspect failed: #{e.message}>"
-      end
-
-      def inspect_activerecord(record)
-        if record.persisted?
-          id_attr = record.class.primary_key
-          id_value = record.send(id_attr) if id_attr
-          "#{record.class.name}(#{id_attr}: #{id_value})"
-        else
-          "#{record.class.name}(new_record)"
-        end
-      rescue StandardError => e
-        "#{record.class.name}(<inspection failed>)"
-      end
-
-      def inspect_model(model)
-        "#{model.class.name}(#{model.class.attribute_names.size} attributes)"
-      rescue StandardError => e
-        "#{model.class.name}(<inspection failed>)"
-      end
-
-      def simple_inspect(value)
-        result = value.inspect
-        if result.length > 200
-          "#{value.class.name}[#{result.length} chars]"
-        else
-          result
-        end
-      end
-
-      def filter_sensitive_data(key, value, context = {})
-        if EventTimeline.configuration&.should_filter?(key, value, context)
-          case value
-          when String
-            '<FILTERED>'
-          when Hash
-            filter_hash(value)
-          when Array
-            value.map.with_index { |item, index| filter_sensitive_data("item_#{index}", item, context) }
-          when defined?(ActiveRecord::Base) && ActiveRecord::Base
-            filter_activerecord(value)
-          else
-            '<FILTERED>'
-          end
-        else
-          safe_inspect(value)
-        end
-      end
-
-      def filter_hash(hash)
-        filtered = {}
-        hash.each do |key, value|
-          filtered[key] = filter_sensitive_data(key, value, { context: :hash_value })
-        end
-        filtered
-      end
-
-      def filter_activerecord(record)
-        if EventTimeline.configuration&.should_filter?(:activerecord, record, { context: :model })
-          '<FILTERED>'
-        else
-          # Show model with filtered attributes
-          filtered_attrs = {}
-          record.attributes.each do |key, value|
-            filtered_attrs[key] = if EventTimeline.configuration&.should_filter?(key, value, { context: :attribute })
-                                    '<FILTERED>'
-                                  else
-                                    safe_inspect(value)
-                                  end
-          end
-          "#{inspect_activerecord(record)} {#{filtered_attrs.map { |k, v| "#{k}: #{v}" }.join(', ')}}"
-        end
-      rescue StandardError => e
-        "#{inspect_activerecord(record)} <filtering failed>"
-      end
-
       def determine_correlation_id
         if Thread.current[:request_id]
           Thread.current[:request_id]
-        elsif defined?(ActiveJob::Base) && ActiveJob::Base.current_execution&.job_id
-          ActiveJob::Base.current_execution.job_id
+        elsif Thread.current[:active_job_id]
+          Thread.current[:active_job_id]
         else
           SecureRandom.uuid.tap { |id| CurrentCorrelation.id = id }
         end
