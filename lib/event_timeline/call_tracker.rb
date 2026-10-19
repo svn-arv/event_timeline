@@ -78,10 +78,10 @@ module EventTimeline
         return if @autoload_hooks_registered || !defined?(Rails.autoloaders)
 
         @autoload_hooks_registered = true
-        Rails.autoloaders.main.on_load(:ANY) do |_cpath, value, _abspath|
+        Rails.autoloaders.main.on_load do |_cpath, value, _abspath|
           attach(value) if installed? && value.is_a?(Module)
         end
-        Rails.autoloaders.main.on_unload(:ANY) { |_cpath, value, _abspath| detach(value) if installed? }
+        Rails.autoloaders.main.on_unload { |_cpath, value, _abspath| detach(value) if installed? }
       end
 
       # Rails' deprecated constant proxies print a warning on almost any method call, is_a? included.
