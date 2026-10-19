@@ -7,27 +7,25 @@ module EventTimeline
     THREAD_KEY_EVENT_SEQUENCE = :event_timeline_event_sequence
 
     class << self
-      attr_reader :call_trace, :return_trace
-
       def install!
         return if installed?
 
-        @call_trace = TracePoint.new(:call) { |tp| handle_call(tp) }
-        @return_trace = TracePoint.new(:return) { |tp| handle_return(tp) }
-
-        @call_trace.enable
-        @return_trace.enable
+        @traces = {}
+        ObjectSpace.each_object(Module) do |mod|
+          attach(mod) unless deprecated_constant?(mod) || mod.singleton_class?
+        rescue StandardError => e
+          Rails.logger.warn "EventTimeline could not attach to #{mod.name}: #{e.message}"
+        end
+        register_autoload_hooks
       end
 
       def uninstall!
-        @call_trace&.disable
-        @return_trace&.disable
-        @call_trace = nil
-        @return_trace = nil
+        @traces&.each_value { |traces| traces.each(&:disable) }
+        @traces = nil
       end
 
       def installed?
-        @call_trace&.enabled? || @return_trace&.enabled?
+        !@traces.nil?
       end
 
       def flush_events(_correlation_id)
@@ -75,6 +73,49 @@ module EventTimeline
 
       private
 
+      # Classes loaded or reloaded after boot are attached and detached as Zeitwerk loads them.
+      def register_autoload_hooks
+        return if @autoload_hooks_registered || !defined?(Rails.autoloaders)
+
+        @autoload_hooks_registered = true
+        Rails.autoloaders.main.on_load(:ANY) do |_cpath, value, _abspath|
+          attach(value) if installed? && value.is_a?(Module)
+        end
+        Rails.autoloaders.main.on_unload(:ANY) { |_cpath, value, _abspath| detach(value) if installed? }
+      end
+
+      # Rails' deprecated constant proxies print a warning on almost any method call, is_a? included.
+      def deprecated_constant?(mod)
+        defined?(ActiveSupport::Deprecation::DeprecatedConstantProxy) &&
+          Kernel.instance_method(:is_a?).bind_call(mod, ActiveSupport::Deprecation::DeprecatedConstantProxy)
+      end
+
+      def attach(mod)
+        return if @traces.nil? || @traces.key?(mod)
+
+        @traces[mod] = watched_methods(mod).map do |method|
+          TracePoint.new(:call, :return) { |tp| tp.event == :call ? handle_call(tp) : handle_return(tp) }
+                    .tap { |trace| trace.enable(target: method) }
+        end
+      end
+
+      def detach(mod)
+        @traces&.delete(mod)&.each(&:disable)
+      end
+
+      # Attr methods have no Ruby body to target, and aliases share one, so each body is traced once.
+      def watched_methods(mod)
+        [mod, mod.singleton_class].flat_map { |owner| own_methods(owner) }.uniq.select do |method|
+          RubyVM::InstructionSequence.of(method) && EventTimeline.configuration&.watched?(method.source_location&.first)
+        end
+      end
+
+      def own_methods(owner)
+        names = owner.instance_methods(false) + owner.private_instance_methods(false) +
+                owner.protected_instance_methods(false)
+        names.map { |name| owner.instance_method(name) }
+      end
+
       def clean_backtrace(backtrace)
         # Filter out gem internals, keep app code
         backtrace.reject { |line| line.include?('/gems/') || line.include?('/ruby/') }
@@ -92,8 +133,6 @@ module EventTimeline
       end
 
       def handle_call(tp)
-        return unless EventTimeline.configuration&.watched?(tp.path)
-
         correlation_id = CurrentCorrelation.id
         return unless correlation_id
 
@@ -107,8 +146,6 @@ module EventTimeline
       end
 
       def handle_return(tp)
-        return unless EventTimeline.configuration&.watched?(tp.path)
-
         correlation_id = CurrentCorrelation.id
         return unless correlation_id
 

@@ -112,16 +112,50 @@ module EventTimeline
       assert_empty buffered_events
     end
 
-    test 'return in an unwatched file never reads the correlation' do
-      configure_timeline { |config| config.watch Rails.root.join('app').to_s }
-      unwatched_return = Struct.new(:path).new('/not/watched.rb')
-
-      reads = 0
-      CurrentCorrelation.stub(:id, -> { reads += 1 }) do
-        CallTracker.send(:handle_return, unwatched_return)
+    test 'watched method records its call and return' do
+      with_correlation('watched-test') do
+        track_calls { TrackedSample.new.double(2) }
       end
 
-      assert_equal 0, reads
+      assert_equal(%w[method_call method_return], buffered_events.map { |event| event[:category] })
+    end
+
+    test 'method in an unwatched file never reaches the tracker' do
+      # Code outside watched files must pay nothing, not even a handler call.
+      with_correlation('unwatched-test') do
+        CallTracker.stub(:handle_call, ->(_) { raise 'tracker reached' }) do
+          track_calls { CalculatorService.add(1, 2) }
+        end
+      end
+
+      assert_empty buffered_events
+    end
+
+    test 'attr methods in a watched class do not stop its other methods being tracked' do
+      with_correlation('attr-test') do
+        track_calls { AttrSample.new.double(2) }
+      end
+
+      assert_equal(%w[method_call method_return], buffered_events.map { |event| event[:category] })
+    end
+
+    test 'aliased method records one call per call' do
+      with_correlation('alias-test') do
+        track_calls { TrackedSample.new.twice(2) }
+      end
+
+      assert_equal(1, buffered_events.count { |event| event[:category] == 'method_call' })
+    end
+
+    test 'class autoloaded after install! is tracked' do
+      # Development and test load classes lazily, after the boot-time scan.
+      skip 'needs lazy loading; eager loading already loaded LazyService' unless Object.autoload?(:LazyService)
+
+      with_correlation('lazy-test') do
+        track_calls(Rails.root.join('app/services/lazy_service.rb').to_s) { LazyService.new.ping }
+      end
+
+      assert_equal(%w[method_call method_return], buffered_events.map { |event| event[:category] })
     end
 
     test 'captures params when the receiver overrides method' do
@@ -185,44 +219,49 @@ module EventTimeline
       assert_empty(sql.grep(/DELETE/i))
     end
 
-    test 'install! enables tracepoints' do
+    test 'install! enables tracking' do
       CallTracker.uninstall!
       refute CallTracker.installed?
 
       CallTracker.install!
       assert CallTracker.installed?
-
-      CallTracker.uninstall!
-      refute CallTracker.installed?
-    end
-
-    test 'install! is idempotent' do
-      CallTracker.uninstall!
-
-      CallTracker.install!
-      first_call_trace = CallTracker.call_trace
-
-      CallTracker.install!
-      assert_same first_call_trace, CallTracker.call_trace
-
+    ensure
       CallTracker.uninstall!
     end
 
-    test 'uninstall! disables tracepoints' do
-      CallTracker.install!
-      assert CallTracker.installed?
-
+    test 'install! scan triggers no deprecation warnings' do
+      # Rails keeps deprecated constants as proxy modules that warn on any method call.
+      assert_not_deprecated(ActiveSupport.deprecator) do
+        CallTracker.uninstall!
+        CallTracker.install!
+      end
+    ensure
       CallTracker.uninstall!
+    end
+
+    test 'install! twice attaches one tracepoint per watched method' do
+      track_calls do
+        CallTracker.install!
+
+        assert_equal 1, CallTracker.instance_variable_get(:@traces)[TrackedSample].size
+      end
+    end
+
+    test 'uninstall! stops recording watched calls' do
+      track_calls { CallTracker.uninstall! }
+
+      with_correlation('uninstalled-test') { TrackedSample.new.double(2) }
+
       refute CallTracker.installed?
-      assert_nil CallTracker.call_trace
-      assert_nil CallTracker.return_trace
+      assert_empty buffered_events
     end
 
     private
 
-    def track_calls
+    def track_calls(path = __FILE__)
       # The runner may load this file by a relative path, which `watch` would make absolute.
-      configure_timeline { |config| config.watched_paths << __FILE__ }
+      configure_timeline { |config| config.watched_paths << path }
+      CallTracker.uninstall!
       CallTracker.install!
       yield
     ensure
@@ -235,6 +274,13 @@ module EventTimeline
   end
 
   class TrackedSample
+    def double(amount) = amount * 2
+    alias twice double
+  end
+
+  class AttrSample
+    attr_accessor :label
+
     def double(amount) = amount * 2
   end
 
