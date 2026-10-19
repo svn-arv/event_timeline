@@ -134,6 +134,35 @@ module EventTimeline
       refute_equal first_call, second_call
     end
 
+    test 'buffer stops at the per-request cap and marks the cut once' do
+      with_correlation('cap-test') do
+        track_calls { 600.times { TrackedSample.new.double(2) } }
+      end
+
+      limit = EventTimeline.configuration.max_events_per_correlation
+      assert_equal limit + 1, buffered_events.size
+      marker = buffered_events.last
+      assert_equal ['EVENTS TRUNCATED', 'warn', 'truncated', { limit: limit }],
+                   marker.values_at(:name, :severity, :category, :payload)
+    end
+
+    test 'flushing a full buffer deletes nothing' do
+      configure_timeline { |config| config.max_events_per_correlation = 500 }
+      Thread.current[:event_timeline_event_buffer] = Array.new(500) do |i|
+        { name: "event_#{i}", severity: 'info', category: 'method_call', payload: {},
+          correlation_id: 'full-buffer', occurred_at: Time.current }
+      end
+
+      sql = []
+      callback = ->(*, payload) { sql << payload[:sql] }
+      ActiveSupport::Notifications.subscribed(callback, 'sql.active_record') do
+        CallTracker.flush_events('full-buffer')
+      end
+
+      assert_equal 500, Session.where(correlation_id: 'full-buffer').count
+      assert_empty(sql.grep(/DELETE/i))
+    end
+
     test 'install! enables tracepoints' do
       CallTracker.uninstall!
       refute CallTracker.installed?

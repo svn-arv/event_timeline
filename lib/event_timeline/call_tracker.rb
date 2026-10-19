@@ -30,14 +30,11 @@ module EventTimeline
         @call_trace&.enabled? || @return_trace&.enabled?
       end
 
-      def flush_events(correlation_id)
+      def flush_events(_correlation_id)
         buffer = thread_event_buffer
         return if buffer.empty?
 
-        buffer_size = buffer.size
         Session.insert_all(buffer)
-
-        RotationService.enforce_correlation_limit(correlation_id, buffer_size)
         RotationService.cleanup_if_needed
       rescue StandardError => e
         Rails.logger.error "EventTimeline flush failed: #{e.message}" if defined?(Rails.logger)
@@ -189,8 +186,16 @@ module EventTimeline
         Thread.current[THREAD_KEY_EVENT_SEQUENCE] = (Thread.current[THREAD_KEY_EVENT_SEQUENCE] || 0) + 1
       end
 
+      # Past the per-request cap, keep the earliest events and mark the cut once.
       def buffer_event(event)
-        thread_event_buffer << event
+        buffer = thread_event_buffer
+        limit = EventTimeline.configuration&.max_events_per_correlation
+        if limit.nil? || buffer.size < limit
+          buffer << event
+        elsif buffer.size == limit
+          buffer << { name: 'EVENTS TRUNCATED', severity: 'warn', category: 'truncated', payload: { limit: limit },
+                      correlation_id: event[:correlation_id], occurred_at: event[:occurred_at] }
+        end
       end
 
       def capture_params(tp)
