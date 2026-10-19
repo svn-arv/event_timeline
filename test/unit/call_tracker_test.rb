@@ -158,6 +158,16 @@ module EventTimeline
                    marker.values_at(:name, :severity, :category, :payload)
     end
 
+    test 'exception is recorded even when the buffer is full' do
+      # The exception is what a developer opens a capped request to find.
+      configure_timeline { |config| config.max_events_per_correlation = 2 }
+      Thread.current[:event_timeline_event_buffer] = [{ name: 'a' }, { name: 'b' }, { name: 'EVENTS TRUNCATED' }]
+
+      CallTracker.record_exception(RuntimeError.new('boom'), 'full-exception')
+
+      assert_equal 'EXCEPTION: RuntimeError', buffered_events.last[:name]
+    end
+
     test 'flushing a full buffer deletes nothing' do
       configure_timeline { |config| config.max_events_per_correlation = 500 }
       Thread.current[:event_timeline_event_buffer] = Array.new(500) do |i|

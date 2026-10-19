@@ -53,7 +53,8 @@ module EventTimeline
         backtrace = clean_backtrace(exception.backtrace || [])
         source_location = extract_source_location(backtrace)
 
-        buffer_event(
+        # Bypasses the cap: the exception is the event a capped request most needs.
+        thread_event_buffer << {
           name: "EXCEPTION: #{exception.class.name}",
           severity: 'error',
           category: 'exception',
@@ -67,7 +68,7 @@ module EventTimeline
           },
           correlation_id: correlation_id,
           occurred_at: Time.current
-        )
+        }
       rescue StandardError => e
         Rails.logger.error "EventTimeline exception recording failed: #{e.message}" if defined?(Rails.logger)
       end
