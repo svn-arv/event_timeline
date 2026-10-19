@@ -4,54 +4,55 @@ module EventTimeline
   class CallTracker
     THREAD_KEY_METHOD_STACK = :event_timeline_method_stack
     THREAD_KEY_EVENT_BUFFER = :event_timeline_event_buffer
+    THREAD_KEY_EVENT_SEQUENCE = :event_timeline_event_sequence
 
     class << self
-      attr_reader :call_trace, :return_trace
-
       def install!
         return if installed?
 
-        @call_trace = TracePoint.new(:call) { |tp| handle_call(tp) }
-        @return_trace = TracePoint.new(:return) { |tp| handle_return(tp) }
-
-        @call_trace.enable
-        @return_trace.enable
+        @traces = {}
+        ObjectSpace.each_object(Module) do |mod|
+          attach(mod) unless deprecated_constant?(mod) || mod.singleton_class?
+        rescue StandardError => e
+          Rails.logger.warn "EventTimeline could not attach to #{mod.name}: #{e.message}"
+        end
+        register_autoload_hooks
       end
 
       def uninstall!
-        @call_trace&.disable
-        @return_trace&.disable
-        @call_trace = nil
-        @return_trace = nil
+        @traces&.each_value { |traces| traces.each(&:disable) }
+        @traces = nil
       end
 
       def installed?
-        @call_trace&.enabled? || @return_trace&.enabled?
+        !@traces.nil?
       end
 
-      def flush_events(correlation_id)
+      def flush_events(_correlation_id)
         buffer = thread_event_buffer
         return if buffer.empty?
 
-        buffer_size = buffer.size
         Session.insert_all(buffer)
-
-        RotationService.enforce_correlation_limit(correlation_id, buffer_size)
         RotationService.cleanup_if_needed
       rescue StandardError => e
         Rails.logger.error "EventTimeline flush failed: #{e.message}" if defined?(Rails.logger)
+      ensure
+        Thread.current[THREAD_KEY_EVENT_BUFFER] = []
+        Thread.current[THREAD_KEY_EVENT_SEQUENCE] = nil
       end
 
       def cleanup_thread_state(correlation_id)
         thread_method_stack.delete(correlation_id)
         Thread.current[THREAD_KEY_EVENT_BUFFER] = []
+        Thread.current[THREAD_KEY_EVENT_SEQUENCE] = nil
       end
 
       def record_exception(exception, correlation_id)
         backtrace = clean_backtrace(exception.backtrace || [])
         source_location = extract_source_location(backtrace)
 
-        buffer_event(
+        # Bypasses the cap: the exception is the event a capped request most needs.
+        thread_event_buffer << {
           name: "EXCEPTION: #{exception.class.name}",
           severity: 'error',
           category: 'exception',
@@ -65,12 +66,55 @@ module EventTimeline
           },
           correlation_id: correlation_id,
           occurred_at: Time.current
-        )
+        }
       rescue StandardError => e
         Rails.logger.error "EventTimeline exception recording failed: #{e.message}" if defined?(Rails.logger)
       end
 
       private
+
+      # Classes loaded or reloaded after boot are attached and detached as Zeitwerk loads them.
+      def register_autoload_hooks
+        return if @autoload_hooks_registered || !defined?(Rails.autoloaders)
+
+        @autoload_hooks_registered = true
+        Rails.autoloaders.main.on_load do |_cpath, value, _abspath|
+          attach(value) if installed? && value.is_a?(Module)
+        end
+        Rails.autoloaders.main.on_unload { |_cpath, value, _abspath| detach(value) if installed? }
+      end
+
+      # Rails' deprecated constant proxies print a warning on almost any method call, is_a? included.
+      def deprecated_constant?(mod)
+        defined?(ActiveSupport::Deprecation::DeprecatedConstantProxy) &&
+          Kernel.instance_method(:is_a?).bind_call(mod, ActiveSupport::Deprecation::DeprecatedConstantProxy)
+      end
+
+      def attach(mod)
+        return if @traces.nil? || @traces.key?(mod)
+
+        @traces[mod] = watched_methods(mod).map do |method|
+          TracePoint.new(:call, :return) { |tp| tp.event == :call ? handle_call(tp) : handle_return(tp) }
+                    .tap { |trace| trace.enable(target: method) }
+        end
+      end
+
+      def detach(mod)
+        @traces&.delete(mod)&.each(&:disable)
+      end
+
+      # Attr methods have no Ruby body to target, and aliases share one, so each body is traced once.
+      def watched_methods(mod)
+        [mod, mod.singleton_class].flat_map { |owner| own_methods(owner) }.uniq.select do |method|
+          RubyVM::InstructionSequence.of(method) && EventTimeline.configuration&.watched?(method.source_location&.first)
+        end
+      end
+
+      def own_methods(owner)
+        names = owner.instance_methods(false) + owner.private_instance_methods(false) +
+                owner.protected_instance_methods(false)
+        names.map { |name| owner.instance_method(name) }
+      end
 
       def clean_backtrace(backtrace)
         # Filter out gem internals, keep app code
@@ -89,43 +133,42 @@ module EventTimeline
       end
 
       def handle_call(tp)
-        return unless EventTimeline.configuration&.watched?(tp.path)
+        correlation_id = CurrentCorrelation.id
+        return unless correlation_id
 
-        correlation_id = CurrentCorrelation.id || determine_correlation_id
-        event_id = SecureRandom.uuid
+        event_id = next_event_id
+        signature = method_signature(tp)
 
-        push_to_stack(correlation_id, event_id, tp)
-        buffer_call_event(correlation_id, event_id, tp)
+        push_to_stack(correlation_id, event_id, signature)
+        buffer_call_event(correlation_id, event_id, signature, tp)
       rescue StandardError => e
         Rails.logger.error "EventTimeline call tracking failed: #{e.message}" if defined?(Rails.logger)
       end
 
       def handle_return(tp)
-        # Skip watched? check - if we didn't track the call, pop_from_stack returns nil
         correlation_id = CurrentCorrelation.id
         return unless correlation_id
 
-        method_info = pop_from_stack(correlation_id, tp)
+        signature = method_signature(tp)
+        method_info = pop_from_stack(correlation_id, signature)
         return unless method_info
 
-        buffer_return_event(correlation_id, method_info, tp)
+        buffer_return_event(correlation_id, method_info, signature, tp)
       rescue StandardError => e
         Rails.logger.error "EventTimeline return tracking failed: #{e.message}" if defined?(Rails.logger)
       end
 
-      def push_to_stack(correlation_id, event_id, tp)
+      def push_to_stack(correlation_id, event_id, signature)
         stack = thread_method_stack[correlation_id] ||= []
         stack.push(
           event_id: event_id,
-          method: method_signature(tp)
+          method: signature
         )
       end
 
-      def pop_from_stack(correlation_id, tp)
+      def pop_from_stack(correlation_id, signature)
         stack = thread_method_stack[correlation_id]
         return unless stack
-
-        signature = method_signature(tp)
 
         # Find the LAST matching entry (proper LIFO for recursion)
         index = stack.rindex { |m| m[:method] == signature }
@@ -138,9 +181,9 @@ module EventTimeline
         "#{tp.defined_class}##{tp.method_id}"
       end
 
-      def buffer_call_event(correlation_id, event_id, tp)
+      def buffer_call_event(correlation_id, event_id, signature, tp)
         buffer_event(
-          name: method_signature(tp),
+          name: signature,
           severity: 'info',
           category: 'method_call',
           payload: {
@@ -152,13 +195,13 @@ module EventTimeline
             params: capture_params(tp)
           },
           correlation_id: correlation_id,
-          occurred_at: Time.current
+          occurred_at: Time.now
         )
       end
 
-      def buffer_return_event(correlation_id, method_info, tp)
+      def buffer_return_event(correlation_id, method_info, signature, tp)
         buffer_event(
-          name: "#{method_signature(tp)}_return",
+          name: "#{signature}_return",
           severity: 'info',
           category: 'method_return',
           payload: {
@@ -168,7 +211,7 @@ module EventTimeline
             method: tp.method_id.to_s
           },
           correlation_id: correlation_id,
-          occurred_at: Time.current
+          occurred_at: Time.now
         )
       end
 
@@ -180,15 +223,26 @@ module EventTimeline
         Thread.current[THREAD_KEY_EVENT_BUFFER] ||= []
       end
 
+      def next_event_id
+        Thread.current[THREAD_KEY_EVENT_SEQUENCE] = (Thread.current[THREAD_KEY_EVENT_SEQUENCE] || 0) + 1
+      end
+
+      # Past the per-request cap, keep the earliest events and mark the cut once.
       def buffer_event(event)
-        thread_event_buffer << event
+        buffer = thread_event_buffer
+        limit = EventTimeline.configuration&.max_events_per_correlation
+        if limit.nil? || buffer.size < limit
+          buffer << event
+        elsif buffer.size == limit
+          buffer << { name: 'EVENTS TRUNCATED', severity: 'warn', category: 'truncated', payload: { limit: limit },
+                      correlation_id: event[:correlation_id], occurred_at: event[:occurred_at] }
+        end
       end
 
       def capture_params(tp)
-        method = tp.self.method(tp.method_id)
         params = {}
 
-        method.parameters.each do |_type, name|
+        tp.parameters.each do |_type, name|
           next unless name
 
           if tp.binding.local_variable_defined?(name)
@@ -200,16 +254,6 @@ module EventTimeline
         params
       rescue StandardError => e
         { error: "Failed to capture params: #{e.message}" }
-      end
-
-      def determine_correlation_id
-        if Thread.current[:request_id]
-          Thread.current[:request_id]
-        elsif Thread.current[:active_job_id]
-          Thread.current[:active_job_id]
-        else
-          SecureRandom.uuid.tap { |id| CurrentCorrelation.id = id }
-        end
       end
     end
   end

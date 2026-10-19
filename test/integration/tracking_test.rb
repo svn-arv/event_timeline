@@ -41,6 +41,17 @@ module EventTimeline
       assert events.any?, 'Expected events to be recorded'
     end
 
+    test 'controller outside the configured paths records nothing' do
+      configure_timeline do |config|
+        config.watch 'app/models'
+      end
+
+      get '/test'
+
+      request_id = JSON.parse(response.body)['request_id']
+      assert_empty Session.where(correlation_id: request_id)
+    end
+
     test 'events include method call information' do
       configure_timeline do |config|
         config.watch 'app/controllers'

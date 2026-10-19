@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'test_helper'
+require 'minitest/mock'
 
 module EventTimeline
   class CallTrackerTest < TestCase
@@ -66,6 +67,18 @@ module EventTimeline
       assert_equal %w[TestClass#method1 TestClass#method2], events.pluck(:name).sort
     end
 
+    test 'flush_events twice inserts the events once' do
+      configure_timeline { |config| config.watch Rails.root.join('app').to_s }
+      Thread.current[:event_timeline_event_buffer] = [
+        { name: 'TestClass#method1', severity: 'info', category: 'method_call', payload: {},
+          correlation_id: 'double-flush', occurred_at: Time.current }
+      ]
+
+      assert_difference 'Session.count', 1 do
+        2.times { CallTracker.flush_events('double-flush') }
+      end
+    end
+
     test 'flush_events does nothing with empty buffer' do
       configure_timeline do |config|
         config.watch Rails.root.join('app').to_s
@@ -92,53 +105,198 @@ module EventTimeline
       end
     end
 
-    test 'determines correlation_id from thread' do
-      Thread.current[:request_id] = 'thread-request-123'
+    test 'watched call outside a request buffers nothing' do
+      # Nothing flushes outside the middleware, so events here would pile up forever.
+      track_calls { TrackedSample.new.double(2) }
 
-      result = CallTracker.send(:determine_correlation_id)
-      assert_equal 'thread-request-123', result
+      assert_empty buffered_events
     end
 
-    test 'generates UUID when no correlation available' do
-      Thread.current[:request_id] = nil
-      CurrentCorrelation.reset
+    test 'tracker installed at boot records nothing into unit tests' do
+      with_correlation('boot-tracker-test') { CalculatorService.add(1, 2) }
 
-      result = CallTracker.send(:determine_correlation_id)
-
-      assert_match(/\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/, result)
+      assert_empty buffered_events
     end
 
-    test 'install! enables tracepoints' do
+    test 'watched method records its call and return' do
+      with_correlation('watched-test') do
+        track_calls { TrackedSample.new.double(2) }
+      end
+
+      assert_equal(%w[method_call method_return], buffered_events.map { |event| event[:category] })
+    end
+
+    test 'method in an unwatched file never reaches the tracker' do
+      # Code outside watched files must pay nothing, not even a handler call.
+      with_correlation('unwatched-test') do
+        CallTracker.stub(:handle_call, ->(_) { raise 'tracker reached' }) do
+          track_calls { CalculatorService.add(1, 2) }
+        end
+      end
+
+      assert_empty buffered_events
+    end
+
+    test 'attr methods in a watched class do not stop its other methods being tracked' do
+      with_correlation('attr-test') do
+        track_calls { AttrSample.new.double(2) }
+      end
+
+      assert_equal(%w[method_call method_return], buffered_events.map { |event| event[:category] })
+    end
+
+    test 'aliased method records one call per call' do
+      with_correlation('alias-test') do
+        track_calls { TrackedSample.new.twice(2) }
+      end
+
+      assert_equal(1, buffered_events.count { |event| event[:category] == 'method_call' })
+    end
+
+    test 'class autoloaded after install! is tracked' do
+      # Development and test load classes lazily, after the boot-time scan.
+      skip 'needs lazy loading; eager loading already loaded LazyService' unless Object.autoload?(:LazyService)
+
+      with_correlation('lazy-test') do
+        track_calls(Rails.root.join('app/services/lazy_service.rb').to_s) { LazyService.new.ping }
+      end
+
+      assert_equal(%w[method_call method_return], buffered_events.map { |event| event[:category] })
+    end
+
+    test 'captures params when the receiver overrides method' do
+      with_correlation('params-test') do
+        track_calls { MethodOverridingSample.new.double(21) }
+      end
+
+      call_event = buffered_events.find { |event| event[:category] == 'method_call' }
+      assert_equal({ amount: '21' }, call_event[:payload][:params])
+    end
+
+    test 'call and return share an integer event id, distinct per call' do
+      with_correlation('event-id-test') do
+        track_calls { 2.times { TrackedSample.new.double(2) } }
+      end
+
+      ids = buffered_events.map { |event| event[:payload][:event_id] }
+      assert(ids.all?(Integer))
+      first_call, first_return, second_call, second_return = ids
+      assert_equal first_call, first_return
+      assert_equal second_call, second_return
+      refute_equal first_call, second_call
+    end
+
+    test 'buffer stops at the per-request cap and marks the cut once' do
+      with_correlation('cap-test') do
+        track_calls { 600.times { TrackedSample.new.double(2) } }
+      end
+
+      limit = EventTimeline.configuration.max_events_per_correlation
+      assert_equal limit + 1, buffered_events.size
+      marker = buffered_events.last
+      assert_equal ['EVENTS TRUNCATED', 'warn', 'truncated', { limit: limit }],
+                   marker.values_at(:name, :severity, :category, :payload)
+    end
+
+    test 'exception is recorded even when the buffer is full' do
+      # The exception is what a developer opens a capped request to find.
+      configure_timeline { |config| config.max_events_per_correlation = 2 }
+      Thread.current[:event_timeline_event_buffer] = [{ name: 'a' }, { name: 'b' }, { name: 'EVENTS TRUNCATED' }]
+
+      CallTracker.record_exception(RuntimeError.new('boom'), 'full-exception')
+
+      assert_equal 'EXCEPTION: RuntimeError', buffered_events.last[:name]
+    end
+
+    test 'flushing a full buffer deletes nothing' do
+      configure_timeline { |config| config.max_events_per_correlation = 500 }
+      Thread.current[:event_timeline_event_buffer] = Array.new(500) do |i|
+        { name: "event_#{i}", severity: 'info', category: 'method_call', payload: {},
+          correlation_id: 'full-buffer', occurred_at: Time.current }
+      end
+
+      sql = []
+      callback = ->(*, payload) { sql << payload[:sql] }
+      ActiveSupport::Notifications.subscribed(callback, 'sql.active_record') do
+        CallTracker.flush_events('full-buffer')
+      end
+
+      assert_equal 500, Session.where(correlation_id: 'full-buffer').count
+      assert_empty(sql.grep(/DELETE/i))
+    end
+
+    test 'install! enables tracking' do
       CallTracker.uninstall!
       refute CallTracker.installed?
 
       CallTracker.install!
       assert CallTracker.installed?
-
+    ensure
       CallTracker.uninstall!
+    end
+
+    test 'install! scan triggers no deprecation warnings' do
+      # Rails keeps deprecated constants as proxy modules that warn on any method call.
+      assert_not_deprecated(ActiveSupport.deprecator) do
+        CallTracker.uninstall!
+        CallTracker.install!
+      end
+    ensure
+      CallTracker.uninstall!
+    end
+
+    test 'install! twice attaches one tracepoint per watched method' do
+      with_correlation('reinstall-test') do
+        track_calls do
+          CallTracker.install!
+          TrackedSample.new.double(2)
+
+          assert_equal 1, CallTracker.instance_variable_get(:@traces)[TrackedSample].size
+        end
+      end
+
+      assert_equal(1, buffered_events.count { |event| event[:category] == 'method_call' })
+    end
+
+    test 'uninstall! stops recording watched calls' do
+      track_calls { CallTracker.uninstall! }
+
+      with_correlation('uninstalled-test') { TrackedSample.new.double(2) }
+
       refute CallTracker.installed?
+      assert_empty buffered_events
     end
 
-    test 'install! is idempotent' do
-      CallTracker.uninstall!
+    private
 
+    def track_calls(path = __FILE__)
+      # The runner may load this file by a relative path, which `watch` would make absolute.
+      configure_timeline { |config| config.watched_paths << path }
       CallTracker.install!
-      first_call_trace = CallTracker.call_trace
-
-      CallTracker.install!
-      assert_same first_call_trace, CallTracker.call_trace
-
+      yield
+    ensure
       CallTracker.uninstall!
     end
 
-    test 'uninstall! disables tracepoints' do
-      CallTracker.install!
-      assert CallTracker.installed?
-
-      CallTracker.uninstall!
-      refute CallTracker.installed?
-      assert_nil CallTracker.call_trace
-      assert_nil CallTracker.return_trace
+    def buffered_events
+      Thread.current[:event_timeline_event_buffer] || []
     end
+  end
+
+  class TrackedSample
+    def double(amount) = amount * 2
+    alias twice double
+  end
+
+  class AttrSample
+    attr_accessor :label
+
+    def double(amount) = amount * 2
+  end
+
+  class MethodOverridingSample
+    def method(*) = raise('nope')
+
+    def double(amount) = amount * 2
   end
 end

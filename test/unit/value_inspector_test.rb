@@ -21,7 +21,7 @@ module EventTimeline
 
     test 'inspect handles hashes under limit' do
       result = ValueInspector.inspect({ a: 1, b: 2 })
-      assert_equal '{:a=>1, :b=>2}', result
+      assert_equal({ a: 1, b: 2 }.inspect, result) # Ruby 3.4 changed Hash#inspect
     end
 
     test 'inspect truncates large hashes' do
@@ -47,6 +47,21 @@ module EventTimeline
 
       assert result.include?('Array')
       assert result.include?('items')
+    end
+
+    test 'inspect summarises a huge array without inspecting it' do
+      uninspectable = Class.new { def inspect = raise('inspected') }.new
+      result = ValueInspector.inspect(Array.new(10_000, uninspectable))
+
+      assert_equal 'Array[10000 items]', result
+    end
+
+    test 'inspect summarises a relation without loading it' do
+      relation = Session.where(name: 'test')
+      result = ValueInspector.inspect(relation)
+
+      assert_equal 'EventTimeline::Session::Relation', result
+      refute relation.loaded?
     end
 
     test 'inspect handles ActiveRecord new records' do
