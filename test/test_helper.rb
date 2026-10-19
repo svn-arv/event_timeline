@@ -22,13 +22,15 @@ Rails.backtrace_cleaner.remove_silencers!
 
 module EventTimeline
   class TestCase < ActiveSupport::TestCase
-    # Reset configuration before each test
+    # Reset configuration before each test. The tracker installed at boot would record into the test.
     setup do
       EventTimeline.configuration = nil
+      EventTimeline::CallTracker.uninstall!
       clear_thread_state
     end
 
     teardown do
+      EventTimeline::CallTracker.uninstall!
       clear_thread_state
     end
 
@@ -62,7 +64,6 @@ module EventTimeline
     setup do
       EventTimeline.configuration = nil
       EventTimeline::Session.delete_all
-      EventTimeline::CallTracker.install!
     end
 
     teardown do
@@ -80,8 +81,11 @@ module EventTimeline
       EventTimeline::CurrentCorrelation.reset if defined?(EventTimeline::CurrentCorrelation)
     end
 
+    # Methods are attached when the tracker installs, so it must install after the paths are set.
     def configure_timeline(&block)
       EventTimeline.configure(&block)
+      EventTimeline::CallTracker.uninstall!
+      EventTimeline::CallTracker.install!
     end
   end
 end

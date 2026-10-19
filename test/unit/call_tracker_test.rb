@@ -112,6 +112,12 @@ module EventTimeline
       assert_empty buffered_events
     end
 
+    test 'tracker installed at boot records nothing into unit tests' do
+      with_correlation('boot-tracker-test') { CalculatorService.add(1, 2) }
+
+      assert_empty buffered_events
+    end
+
     test 'watched method records its call and return' do
       with_correlation('watched-test') do
         track_calls { TrackedSample.new.double(2) }
@@ -261,7 +267,6 @@ module EventTimeline
     def track_calls(path = __FILE__)
       # The runner may load this file by a relative path, which `watch` would make absolute.
       configure_timeline { |config| config.watched_paths << path }
-      CallTracker.uninstall!
       CallTracker.install!
       yield
     ensure
