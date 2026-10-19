@@ -5,6 +5,7 @@
 - `RotationService.enforce_correlation_limit` is removed. The in-memory cap replaces it, so flushes no longer run per-request count or delete queries.
 - `event_id` in call and return payloads is now an integer sequence per request instead of a UUID.
 - Flushing clears the buffer, so a second flush in the same request does not insert the events again.
+- Tracing is targeted: each watched method gets its own TracePoint, attached when its class loads (at boot, or on autoload and reload), so code outside watched files runs at full speed. Paths passed to `watch` after boot apply only after `uninstall!` then `install!`, and methods defined at runtime after their class loaded are not traced.
 - `ActiveRecord::Relation` values are shown as `Model::Relation` without running a query, and large arrays and hashes are summarised without being inspected.
 
 # EventTimeline v0.2.1

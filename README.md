@@ -77,6 +77,8 @@ EventTimeline::CallTracker.install!     # start tracking
 EventTimeline::CallTracker.installed?   # check status
 ```
 
+Methods are attached when their class loads, so configure `watch` before boot. To pick up paths added later, run `uninstall!` then `install!`.
+
 ## Custom correlation IDs
 
 For background jobs or anything outside a request:
@@ -88,7 +90,8 @@ EventTimeline::CurrentCorrelation.id = "import-job-#{job.id}"
 ## Limitations
 
 - Only tracks Ruby method calls (not SQL queries or HTTP calls)
-- TracePoint has some overhead - probably don't enable in high-traffic production without sampling
+- Code outside watched files costs nothing
+- Methods defined at runtime, after their class loaded, are not traced
 - Large values get truncated
 
 ## License
