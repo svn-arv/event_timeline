@@ -91,7 +91,9 @@ module EventTimeline
       def handle_call(tp)
         return unless EventTimeline.configuration&.watched?(tp.path)
 
-        correlation_id = CurrentCorrelation.id || determine_correlation_id
+        correlation_id = CurrentCorrelation.id
+        return unless correlation_id
+
         event_id = SecureRandom.uuid
 
         push_to_stack(correlation_id, event_id, tp)
@@ -200,16 +202,6 @@ module EventTimeline
         params
       rescue StandardError => e
         { error: "Failed to capture params: #{e.message}" }
-      end
-
-      def determine_correlation_id
-        if Thread.current[:request_id]
-          Thread.current[:request_id]
-        elsif Thread.current[:active_job_id]
-          Thread.current[:active_job_id]
-        else
-          SecureRandom.uuid.tap { |id| CurrentCorrelation.id = id }
-        end
       end
     end
   end

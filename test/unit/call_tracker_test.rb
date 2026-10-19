@@ -93,20 +93,11 @@ module EventTimeline
       end
     end
 
-    test 'determines correlation_id from thread' do
-      Thread.current[:request_id] = 'thread-request-123'
+    test 'watched call outside a request buffers nothing' do
+      # Nothing flushes outside the middleware, so events here would pile up forever.
+      track_calls { TrackedSample.new.double(2) }
 
-      result = CallTracker.send(:determine_correlation_id)
-      assert_equal 'thread-request-123', result
-    end
-
-    test 'generates UUID when no correlation available' do
-      Thread.current[:request_id] = nil
-      CurrentCorrelation.reset
-
-      result = CallTracker.send(:determine_correlation_id)
-
-      assert_match(/\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/, result)
+      assert_empty buffered_events
     end
 
     test 'return in an unwatched file never reads the correlation' do
@@ -177,6 +168,10 @@ module EventTimeline
     def buffered_events
       Thread.current[:event_timeline_event_buffer] || []
     end
+  end
+
+  class TrackedSample
+    def double(amount) = amount * 2
   end
 
   class MethodOverridingSample
