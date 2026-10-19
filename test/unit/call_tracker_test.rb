@@ -121,6 +121,19 @@ module EventTimeline
       assert_equal({ amount: '21' }, call_event[:payload][:params])
     end
 
+    test 'call and return share an integer event id, distinct per call' do
+      with_correlation('event-id-test') do
+        track_calls { 2.times { TrackedSample.new.double(2) } }
+      end
+
+      ids = buffered_events.map { |event| event[:payload][:event_id] }
+      assert(ids.all?(Integer))
+      first_call, first_return, second_call, second_return = ids
+      assert_equal first_call, first_return
+      assert_equal second_call, second_return
+      refute_equal first_call, second_call
+    end
+
     test 'install! enables tracepoints' do
       CallTracker.uninstall!
       refute CallTracker.installed?

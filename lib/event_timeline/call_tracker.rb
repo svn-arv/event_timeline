@@ -4,6 +4,7 @@ module EventTimeline
   class CallTracker
     THREAD_KEY_METHOD_STACK = :event_timeline_method_stack
     THREAD_KEY_EVENT_BUFFER = :event_timeline_event_buffer
+    THREAD_KEY_EVENT_SEQUENCE = :event_timeline_event_sequence
 
     class << self
       attr_reader :call_trace, :return_trace
@@ -45,6 +46,7 @@ module EventTimeline
       def cleanup_thread_state(correlation_id)
         thread_method_stack.delete(correlation_id)
         Thread.current[THREAD_KEY_EVENT_BUFFER] = []
+        Thread.current[THREAD_KEY_EVENT_SEQUENCE] = nil
       end
 
       def record_exception(exception, correlation_id)
@@ -94,10 +96,11 @@ module EventTimeline
         correlation_id = CurrentCorrelation.id
         return unless correlation_id
 
-        event_id = SecureRandom.uuid
+        event_id = next_event_id
+        signature = method_signature(tp)
 
-        push_to_stack(correlation_id, event_id, tp)
-        buffer_call_event(correlation_id, event_id, tp)
+        push_to_stack(correlation_id, event_id, signature)
+        buffer_call_event(correlation_id, event_id, signature, tp)
       rescue StandardError => e
         Rails.logger.error "EventTimeline call tracking failed: #{e.message}" if defined?(Rails.logger)
       end
@@ -108,27 +111,26 @@ module EventTimeline
         correlation_id = CurrentCorrelation.id
         return unless correlation_id
 
-        method_info = pop_from_stack(correlation_id, tp)
+        signature = method_signature(tp)
+        method_info = pop_from_stack(correlation_id, signature)
         return unless method_info
 
-        buffer_return_event(correlation_id, method_info, tp)
+        buffer_return_event(correlation_id, method_info, signature, tp)
       rescue StandardError => e
         Rails.logger.error "EventTimeline return tracking failed: #{e.message}" if defined?(Rails.logger)
       end
 
-      def push_to_stack(correlation_id, event_id, tp)
+      def push_to_stack(correlation_id, event_id, signature)
         stack = thread_method_stack[correlation_id] ||= []
         stack.push(
           event_id: event_id,
-          method: method_signature(tp)
+          method: signature
         )
       end
 
-      def pop_from_stack(correlation_id, tp)
+      def pop_from_stack(correlation_id, signature)
         stack = thread_method_stack[correlation_id]
         return unless stack
-
-        signature = method_signature(tp)
 
         # Find the LAST matching entry (proper LIFO for recursion)
         index = stack.rindex { |m| m[:method] == signature }
@@ -141,9 +143,9 @@ module EventTimeline
         "#{tp.defined_class}##{tp.method_id}"
       end
 
-      def buffer_call_event(correlation_id, event_id, tp)
+      def buffer_call_event(correlation_id, event_id, signature, tp)
         buffer_event(
-          name: method_signature(tp),
+          name: signature,
           severity: 'info',
           category: 'method_call',
           payload: {
@@ -155,13 +157,13 @@ module EventTimeline
             params: capture_params(tp)
           },
           correlation_id: correlation_id,
-          occurred_at: Time.current
+          occurred_at: Time.now
         )
       end
 
-      def buffer_return_event(correlation_id, method_info, tp)
+      def buffer_return_event(correlation_id, method_info, signature, tp)
         buffer_event(
-          name: "#{method_signature(tp)}_return",
+          name: "#{signature}_return",
           severity: 'info',
           category: 'method_return',
           payload: {
@@ -171,7 +173,7 @@ module EventTimeline
             method: tp.method_id.to_s
           },
           correlation_id: correlation_id,
-          occurred_at: Time.current
+          occurred_at: Time.now
         )
       end
 
@@ -181,6 +183,10 @@ module EventTimeline
 
       def thread_event_buffer
         Thread.current[THREAD_KEY_EVENT_BUFFER] ||= []
+      end
+
+      def next_event_id
+        Thread.current[THREAD_KEY_EVENT_SEQUENCE] = (Thread.current[THREAD_KEY_EVENT_SEQUENCE] || 0) + 1
       end
 
       def buffer_event(event)
