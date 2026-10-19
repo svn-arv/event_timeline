@@ -246,11 +246,16 @@ module EventTimeline
     end
 
     test 'install! twice attaches one tracepoint per watched method' do
-      track_calls do
-        CallTracker.install!
+      with_correlation('reinstall-test') do
+        track_calls do
+          CallTracker.install!
+          TrackedSample.new.double(2)
 
-        assert_equal 1, CallTracker.instance_variable_get(:@traces)[TrackedSample].size
+          assert_equal 1, CallTracker.instance_variable_get(:@traces)[TrackedSample].size
+        end
       end
+
+      assert_equal(1, buffered_events.count { |event| event[:category] == 'method_call' })
     end
 
     test 'uninstall! stops recording watched calls' do
