@@ -1,3 +1,12 @@
+## Unreleased
+
+- Events are recorded only while `CurrentCorrelation.id` is set (the middleware sets it per request). Calls in jobs, the console or other threads without it are no longer buffered under a generated id.
+- Each request keeps at most `max_events_per_correlation` events in memory. Past the cap, later events are dropped and one `EVENTS TRUNCATED` event (category `truncated`, payload `{ limit: n }`) marks the cut. This includes an exception raised after the cap; earlier versions kept the most recent events instead of the first.
+- `RotationService.enforce_correlation_limit` is removed. The in-memory cap replaces it, so flushes no longer run per-request count or delete queries.
+- `event_id` in call and return payloads is now an integer sequence per request instead of a UUID.
+- Flushing clears the buffer, so a second flush in the same request does not insert the events again.
+- `ActiveRecord::Relation` values are shown as `Model::Relation` without running a query, and large arrays and hashes are summarised without being inspected.
+
 # EventTimeline v0.2.1
 
 Performance improvements release.
