@@ -101,7 +101,8 @@ module EventTimeline
       end
 
       def handle_return(tp)
-        # Skip watched? check - if we didn't track the call, pop_from_stack returns nil
+        return unless EventTimeline.configuration&.watched?(tp.path)
+
         correlation_id = CurrentCorrelation.id
         return unless correlation_id
 

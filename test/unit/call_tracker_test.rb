@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'test_helper'
+require 'minitest/mock'
 
 module EventTimeline
   class CallTrackerTest < TestCase
@@ -106,6 +107,18 @@ module EventTimeline
       result = CallTracker.send(:determine_correlation_id)
 
       assert_match(/\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/, result)
+    end
+
+    test 'return in an unwatched file never reads the correlation' do
+      configure_timeline { |config| config.watch Rails.root.join('app').to_s }
+      unwatched_return = Struct.new(:path).new('/not/watched.rb')
+
+      reads = 0
+      CurrentCorrelation.stub(:id, -> { reads += 1 }) do
+        CallTracker.send(:handle_return, unwatched_return)
+      end
+
+      assert_equal 0, reads
     end
 
     test 'install! enables tracepoints' do
