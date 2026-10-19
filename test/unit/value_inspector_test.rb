@@ -49,6 +49,21 @@ module EventTimeline
       assert result.include?('items')
     end
 
+    test 'inspect summarises a huge array without inspecting it' do
+      uninspectable = Class.new { def inspect = raise('inspected') }.new
+      result = ValueInspector.inspect(Array.new(10_000, uninspectable))
+
+      assert_equal 'Array[10000 items]', result
+    end
+
+    test 'inspect summarises a relation without loading it' do
+      relation = Session.where(name: 'test')
+      result = ValueInspector.inspect(relation)
+
+      assert_equal 'EventTimeline::Session::Relation', result
+      refute relation.loaded?
+    end
+
     test 'inspect handles ActiveRecord new records' do
       session = Session.new(
         name: 'test',

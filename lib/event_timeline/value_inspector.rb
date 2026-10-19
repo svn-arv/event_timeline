@@ -9,6 +9,7 @@ module EventTimeline
         return inspect_activerecord(value) if activerecord_model?(value)
         return inspect_activemodel(value) if activemodel_model?(value)
         return value.name if value.is_a?(Class) || value.is_a?(Module)
+        return "#{value.klass.name}::Relation" if relation?(value)
 
         inspect_generic(value)
       rescue StandardError
@@ -46,8 +47,17 @@ module EventTimeline
 
       def inspect_collection(value)
         max_length = EventTimeline.configuration&.max_inspect_length || 200
+        summary = "#{value.class}[#{value.size} items]"
+        # More items than characters allowed can never inspect short enough, so skip the inspect.
+        return summary if value.size > max_length
+
         inspected = value.inspect
-        inspected.length > max_length ? "#{value.class}[#{value.size} items]" : inspected
+        inspected.length > max_length ? summary : inspected
+      end
+
+      # Relation#inspect runs a query.
+      def relation?(value)
+        defined?(ActiveRecord::Relation) && value.is_a?(ActiveRecord::Relation)
       end
 
       def inspect_activemodel(model)
