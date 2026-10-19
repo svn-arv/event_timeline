@@ -21,7 +21,7 @@ module EventTimeline
 
     test 'inspect handles hashes under limit' do
       result = ValueInspector.inspect({ a: 1, b: 2 })
-      assert_equal '{:a=>1, :b=>2}', result
+      assert_equal({ a: 1, b: 2 }.inspect, result) # Ruby 3.4 changed Hash#inspect
     end
 
     test 'inspect truncates large hashes' do
