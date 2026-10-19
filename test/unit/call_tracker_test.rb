@@ -67,6 +67,18 @@ module EventTimeline
       assert_equal %w[TestClass#method1 TestClass#method2], events.pluck(:name).sort
     end
 
+    test 'flush_events twice inserts the events once' do
+      configure_timeline { |config| config.watch Rails.root.join('app').to_s }
+      Thread.current[:event_timeline_event_buffer] = [
+        { name: 'TestClass#method1', severity: 'info', category: 'method_call', payload: {},
+          correlation_id: 'double-flush', occurred_at: Time.current }
+      ]
+
+      assert_difference 'Session.count', 1 do
+        2.times { CallTracker.flush_events('double-flush') }
+      end
+    end
+
     test 'flush_events does nothing with empty buffer' do
       configure_timeline do |config|
         config.watch Rails.root.join('app').to_s

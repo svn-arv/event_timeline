@@ -38,6 +38,9 @@ module EventTimeline
         RotationService.cleanup_if_needed
       rescue StandardError => e
         Rails.logger.error "EventTimeline flush failed: #{e.message}" if defined?(Rails.logger)
+      ensure
+        Thread.current[THREAD_KEY_EVENT_BUFFER] = []
+        Thread.current[THREAD_KEY_EVENT_SEQUENCE] = nil
       end
 
       def cleanup_thread_state(correlation_id)
