@@ -1,4 +1,8 @@
-## Unreleased
+# EventTimeline v0.3.0
+
+Targeted tracing release. On the dummy app, per-request overhead on a small action drops from 4.5 ms to 0.5 ms, code outside watched files runs at tracker-off speed, and a 500-event flush drops from 189 ms to 15 ms.
+
+## Changes
 
 - Events are recorded only while `CurrentCorrelation.id` is set (the middleware sets it per request). Calls in jobs, the console or other threads without it are no longer buffered under a generated id.
 - Each request keeps at most `max_events_per_correlation` events in memory. Past the cap, later events are dropped and one `EVENTS TRUNCATED` event (category `truncated`, payload `{ limit: n }`) marks the cut. An exception is always recorded, even past the cap. Earlier versions kept the most recent events instead of the first.
@@ -7,6 +11,18 @@
 - Flushing clears the buffer, so a second flush in the same request does not insert the events again.
 - Tracing is targeted: each watched method gets its own TracePoint, attached when its class loads (at boot, or on autoload and reload), so code outside watched files runs at full speed. Paths passed to `watch` after boot apply only after `uninstall!` then `install!`, and methods defined at runtime after their class loaded are not traced.
 - `ActiveRecord::Relation` values are shown as `Model::Relation` without running a query, and large arrays and hashes are summarised without being inspected.
+
+## Installation
+
+```ruby
+gem 'event_timeline', '~> 0.3.0'
+```
+
+```bash
+bundle update event_timeline
+```
+
+---
 
 # EventTimeline v0.2.1
 
