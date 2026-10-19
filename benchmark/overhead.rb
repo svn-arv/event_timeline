@@ -55,7 +55,7 @@ Tracker.install!
 runs = 20
 total = 0.0
 (runs + 1).times do |run|
-  # Events carry CurrentCorrelation.id, so match it to the flushed id for the rotation check.
+  # Calls are buffered only while a correlation id is set; use one per run, as each request has its own.
   EventTimeline::CurrentCorrelation.id = "bench-flush-#{run}"
   reset_buffers
   250.times { CalculatorService.add(1, 2) }
@@ -65,6 +65,11 @@ total = 0.0
 end
 Tracker.uninstall!
 flush_ms = total * 1e3 / runs
+
+# One boot-time scan of every loaded module, attaching to watched methods.
+Tracker.uninstall!
+install_ms = Benchmark.realtime { Tracker.install! } * 1e3
+Tracker.uninstall!
 
 n = 300
 app = Rack::MockRequest.new(Rails.application)
@@ -77,4 +82,5 @@ rows << ['Full request GET /test (ms/req)', off * 1e3 / n, on * 1e3 / n]
 puts format('%-34s %12s %12s %10s', 'Scenario', 'OFF', 'ON', 'ON/OFF')
 rows.each { |name, o, i| puts format('%-34s %12.3f %12.3f %9.2fx', name, o, i, i / o) }
 puts format('%-34s %12s %12.3f', 'Flush 500 events (ms/flush)', '-', flush_ms)
+puts format('%-34s %12s %12.3f', 'install! (ms)', '-', install_ms)
 puts format('Request overhead: %.3f ms', rows.last[2] - rows.last[1])
