@@ -186,10 +186,9 @@ module EventTimeline
       end
 
       def capture_params(tp)
-        method = tp.self.method(tp.method_id)
         params = {}
 
-        method.parameters.each do |_type, name|
+        tp.parameters.each do |_type, name|
           next unless name
 
           if tp.binding.local_variable_defined?(name)

@@ -121,6 +121,15 @@ module EventTimeline
       assert_equal 0, reads
     end
 
+    test 'captures params when the receiver overrides method' do
+      with_correlation('params-test') do
+        track_calls { MethodOverridingSample.new.double(21) }
+      end
+
+      call_event = buffered_events.find { |event| event[:category] == 'method_call' }
+      assert_equal({ amount: '21' }, call_event[:payload][:params])
+    end
+
     test 'install! enables tracepoints' do
       CallTracker.uninstall!
       refute CallTracker.installed?
@@ -153,5 +162,26 @@ module EventTimeline
       assert_nil CallTracker.call_trace
       assert_nil CallTracker.return_trace
     end
+
+    private
+
+    def track_calls
+      # The runner may load this file by a relative path, which `watch` would make absolute.
+      configure_timeline { |config| config.watched_paths << __FILE__ }
+      CallTracker.install!
+      yield
+    ensure
+      CallTracker.uninstall!
+    end
+
+    def buffered_events
+      Thread.current[:event_timeline_event_buffer] || []
+    end
+  end
+
+  class MethodOverridingSample
+    def method(*) = raise('nope')
+
+    def double(amount) = amount * 2
   end
 end
