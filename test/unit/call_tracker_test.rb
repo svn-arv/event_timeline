@@ -225,6 +225,27 @@ module EventTimeline
       assert_empty(sql.grep(/DELETE/i))
     end
 
+    test 'a class method is labelled Class.method so it is not mistaken for an instance method' do
+      with_correlation('class-method-test') do
+        track_calls { ClassMethodSample.build(2) }
+      end
+
+      assert_equal(%w[EventTimeline::ClassMethodSample.build EventTimeline::ClassMethodSample.build_return],
+                   buffered_events.map { |event| event[:name] })
+    end
+
+    test 'a Ruby 3.3 backtrace names the method and line that raised' do
+      location = exception_location("app/controllers/orders_controller.rb:84:in `OrdersController#show'")
+
+      assert_equal ['app/controllers/orders_controller.rb', 84, 'OrdersController#show'], location
+    end
+
+    test 'a Ruby 3.4 backtrace still names the method and line that raised' do
+      location = exception_location("app/controllers/orders_controller.rb:84:in 'OrdersController#show'")
+
+      assert_equal ['app/controllers/orders_controller.rb', 84, 'OrdersController#show'], location
+    end
+
     test 'install! enables tracking' do
       CallTracker.uninstall!
       refute CallTracker.installed?
@@ -281,11 +302,22 @@ module EventTimeline
     def buffered_events
       Thread.current[:event_timeline_event_buffer] || []
     end
+
+    def exception_location(backtrace_line)
+      exception = RuntimeError.new('boom')
+      exception.set_backtrace([backtrace_line])
+      CallTracker.record_exception(exception, 'location-test')
+      buffered_events.last[:payload].values_at(:source_file, :source_line, :source_method)
+    end
   end
 
   class TrackedSample
     def double(amount) = amount * 2
     alias twice double
+  end
+
+  class ClassMethodSample
+    def self.build(amount) = amount * 2
   end
 
   class AttrSample
