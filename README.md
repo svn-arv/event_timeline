@@ -1,12 +1,34 @@
 # EventTimeline
 
-A Rails engine that records method calls during requests so you can see what actually happened.
-
-## Why?
+Debug Rails apps by replaying method calls from any request.
 
 You get a bug report: "Order failed for user X". You check the logs, see a 500 error, but the stack trace doesn't tell you what state the app was in or what data was being processed.
 
-EventTimeline records the method calls, parameters, and return values during the request. You visit `/event_timeline/sessions/<request_id>` and see exactly what happened.
+## What you get
+
+![Session page](docs/images/session.png)
+
+- A SUCCESS or FAILED badge for the request.
+- Every call to a watched method in order, with its params, its return value and a timestamp.
+- The exception class and message, the method, file and line that raised it, and the backtrace.
+- The full recorded payload of any event, one click away.
+
+## Why
+
+- Requests stay fast. Expected overhead is listed below.
+- Code outside watched files runs at tracker-off speed.
+- A crash is always recorded with its source location, even when the request hit the event cap.
+
+| Expected overhead (dummy app)      | Cost   |
+| ---------------------------------- | ------ |
+| Per request, small action          | 0.5 ms |
+| Flush of 500 events at request end | 15 ms  |
+
+## How it works
+
+- Only the methods you watch are traced. Each one gets its own TracePoint, attached when its class loads.
+- Events are buffered per request and written to the database in one insert when the request ends.
+- Sensitive values are filtered by default, for example password, token and secret.
 
 ## Install
 
@@ -19,8 +41,6 @@ bundle install
 rails generate event_timeline:install
 rails db:migrate
 ```
-
-## Setup
 
 Tell it what to track:
 
@@ -42,57 +62,16 @@ Make a request, grab the request ID from logs, visit:
 
 You'll see the call timeline with params and return values. If the request crashed, you'll see the exception with its source location and backtrace.
 
-## Configuration
-
-```ruby
-EventTimeline.configure do |config|
-  # What to track
-  config.watch 'app/services'
-  config.watch 'lib/payments'
-
-  # Filter sensitive params (these are filtered by default: password, token, secret, etc.)
-  config.add_filtered_attributes :credit_card, :ssn
-
-  # Custom filtering
-  config.filter_pii do |key, value, context|
-    key.to_s.include?('account_number') ? true : nil
-  end
-
-  # Retention
-  config.max_events_per_correlation = 500
-  config.max_total_events = 10_000
-  config.max_event_age = 1.month
-
-  # Truncation
-  config.max_string_length = 100
-  config.max_inspect_length = 200
-end
-```
-
-## Runtime control
-
-```ruby
-EventTimeline::CallTracker.uninstall!   # stop tracking
-EventTimeline::CallTracker.install!     # start tracking
-EventTimeline::CallTracker.installed?   # check status
-```
-
-Methods are attached when their class loads, so configure `watch` before boot. To pick up paths added later, run `uninstall!` then `install!`.
-
-## Custom correlation IDs
-
-For background jobs or anything outside a request:
-
-```ruby
-EventTimeline::CurrentCorrelation.id = "import-job-#{job.id}"
-```
-
 ## Limitations
 
 - Only tracks Ruby method calls (not SQL queries or HTTP calls)
-- Code outside watched files costs nothing
 - Methods defined at runtime, after their class loaded, are not traced
 - Large values get truncated
+
+## Docs
+
+- [Configuration](docs/CONFIGURATION.md): watched paths, filtering, retention, truncation, runtime control, custom correlation IDs
+- [Release notes](RELEASE_NOTES.md)
 
 ## License
 
