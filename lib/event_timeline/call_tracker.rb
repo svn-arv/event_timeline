@@ -124,8 +124,8 @@ module EventTimeline
       def extract_source_location(backtrace)
         return { file: nil, line: nil, method: nil } if backtrace.empty?
 
-        # Parse first line: "/path/to/file.rb:123:in `method_name'"
-        if backtrace.first =~ /\A(.+):(\d+):in `(.+)'\z/
+        # Parse first line; Ruby 3.3 quotes the method as `name', 3.4 as 'name'
+        if backtrace.first =~ /\A(.+):(\d+):in [`'](.+)'\z/
           { file: ::Regexp.last_match(1), line: ::Regexp.last_match(2).to_i, method: ::Regexp.last_match(3) }
         else
           { file: backtrace.first, line: nil, method: nil }
@@ -178,6 +178,8 @@ module EventTimeline
       end
 
       def method_signature(tp)
+        return "#{tp.self}.#{tp.method_id}" if tp.defined_class.singleton_class?
+
         "#{tp.defined_class}##{tp.method_id}"
       end
 

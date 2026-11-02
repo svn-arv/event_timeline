@@ -6,7 +6,7 @@ module EventTimeline
       if EventTimeline.configuration&.narrator_proc
         EventTimeline.configuration.narrator_proc.call(event)
       else
-        event.name.humanize
+        event.name
       end
     end
   end

@@ -51,7 +51,7 @@
               <% if is_return %>
                 &lt;- <%= event.name.gsub('_return', '') %>
               <% else %>
-                <%= narrate_event(event) %>
+                -&gt; <%= narrate_event(event) %>
               <% end %>
             </span>
             <span class="event-time"><%= event.occurred_at.strftime("%H:%M:%S.%L") %></span>
