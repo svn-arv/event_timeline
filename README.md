@@ -15,14 +15,14 @@ You get a bug report: "Order failed for user X". You check the logs, see a 500 e
 
 ## Why
 
-- Requests stay fast. Overhead per request is measured below.
+- Requests stay fast. Expected overhead is listed below.
 - Code outside watched files runs at tracker-off speed.
 - A crash is always recorded with its source location, even when the request hit the event cap.
 
-| Measured on the dummy app (v0.3.0) | Before | After |
-| ---------------------------------- | ------ | ----- |
-| Overhead per request, small action | 4.5 ms | 0.5 ms |
-| Flush of 500 events                | 189 ms | 15 ms |
+| Expected overhead (dummy app)      | Cost   |
+| ---------------------------------- | ------ |
+| Per request, small action          | 0.5 ms |
+| Flush of 500 events at request end | 15 ms  |
 
 ## How it works
 
